@@ -9,22 +9,29 @@ const DB_VERSION = 1;
 
 function getDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onerror = () => {
-      reject(request.error);
-    };
-
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
+    try {
+      if (typeof window === 'undefined' || !window.indexedDB) {
+        return reject(new Error('IndexedDB is not available or blocked in this environment'));
       }
-    };
+      const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onerror = () => {
+        reject(request.error);
+      };
+
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME);
+        }
+      };
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
