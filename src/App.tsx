@@ -46,6 +46,8 @@ import {
   generateDeterministicDatabase
 } from './db/initialData';
 
+import { dbGet, dbSet } from './db/indexedDb';
+
 import {
   getAllAnomalies,
   Anomaly,
@@ -147,10 +149,8 @@ export default function App() {
     return saved !== null ? saved === 'true' : true;
   });
 
-  const [backupsList, setBackupsList] = useState<BackupItem[]>(() => {
-    const saved = localStorage.getItem('st_backups_list');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [backupsList, setBackupsList] = useState<BackupItem[]>([]);
+  const [isDataLoading, setIsDataLoading] = useState<boolean>(true);
 
   // --- PERSISTENCE MOUNT INITIALIZER ---
   useEffect(() => {
@@ -202,43 +202,95 @@ export default function App() {
   }, [selectedStationId]);
 
   useEffect(() => {
-    const cached = localStorage.getItem('st_stations');
-    if (cached) {
-      setStations(JSON.parse(cached));
-      setSupplyPoints(JSON.parse(localStorage.getItem('st_supply_points') || '[]'));
-      setCategories(JSON.parse(localStorage.getItem('st_categories') || '[]'));
-      setReadings(JSON.parse(localStorage.getItem('st_readings') || '[]'));
-      setLossObjects(JSON.parse(localStorage.getItem('st_loss_objects') || '[]'));
-      setLossReadings(JSON.parse(localStorage.getItem('st_loss_readings') || '[]'));
-    } else {
-      const db = generateDeterministicDatabase();
-      setStations(INITIAL_STATIONS);
-      setSupplyPoints(INITIAL_SUPPLY_POINTS);
-      setCategories(INITIAL_CATEGORIES);
-      setReadings(db.readings);
-      setLossObjects(INITIAL_LOSS_OBJECTS);
-      setLossReadings(db.lossReadings);
-      
-      saveToStorage(INITIAL_STATIONS, INITIAL_SUPPLY_POINTS, INITIAL_CATEGORIES, db.readings, INITIAL_LOSS_OBJECTS, db.lossReadings);
+    async function loadData() {
+      try {
+        // Try getting from IndexedDB first
+        let cachedStations = await dbGet<Station[]>('st_stations');
+        let cachedPoints = await dbGet<SupplyPoint[]>('st_supply_points');
+        let cachedCategories = await dbGet<string[]>('st_categories');
+        let cachedReadings = await dbGet<Reading[]>('st_readings');
+        let cachedLossObjects = await dbGet<LossObject[]>('st_loss_objects');
+        let cachedLossReadings = await dbGet<LossReading[]>('st_loss_readings');
+        let cachedBackups = await dbGet<BackupItem[]>('st_backups_list');
+
+        // Migration from localStorage if IndexedDB is empty but localStorage has data
+        const oldStations = localStorage.getItem('st_stations');
+        if (!cachedStations && oldStations) {
+          try {
+            cachedStations = JSON.parse(oldStations);
+            cachedPoints = JSON.parse(localStorage.getItem('st_supply_points') || '[]');
+            cachedCategories = JSON.parse(localStorage.getItem('st_categories') || '[]');
+            cachedReadings = JSON.parse(localStorage.getItem('st_readings') || '[]');
+            cachedLossObjects = JSON.parse(localStorage.getItem('st_loss_objects') || '[]');
+            cachedLossReadings = JSON.parse(localStorage.getItem('st_loss_readings') || '[]');
+            
+            const oldBackups = localStorage.getItem('st_backups_list');
+            if (oldBackups) {
+              cachedBackups = JSON.parse(oldBackups);
+            }
+
+            // Save to IndexedDB so it is migrated permanently
+            if (cachedStations) {
+              await dbSet('st_stations', cachedStations);
+              if (cachedPoints) await dbSet('st_supply_points', cachedPoints);
+              if (cachedCategories) await dbSet('st_categories', cachedCategories);
+              if (cachedReadings) await dbSet('st_readings', cachedReadings);
+              if (cachedLossObjects) await dbSet('st_loss_objects', cachedLossObjects);
+              if (cachedLossReadings) await dbSet('st_loss_readings', cachedLossReadings);
+              if (cachedBackups) await dbSet('st_backups_list', cachedBackups);
+            }
+          } catch (migrationErr) {
+            console.error("Migration from localStorage failed:", migrationErr);
+          }
+        }
+
+        if (cachedStations && cachedStations.length > 0) {
+          setStations(cachedStations);
+          setSupplyPoints(cachedPoints || []);
+          setCategories(cachedCategories || []);
+          setReadings(cachedReadings || []);
+          setLossObjects(cachedLossObjects || []);
+          setLossReadings(cachedLossReadings || []);
+          setBackupsList(cachedBackups || []);
+        } else {
+          // No cache, generate default database
+          const db = generateDeterministicDatabase();
+          setStations(INITIAL_STATIONS);
+          setSupplyPoints(INITIAL_SUPPLY_POINTS);
+          setCategories(INITIAL_CATEGORIES);
+          setReadings(db.readings);
+          setLossObjects(INITIAL_LOSS_OBJECTS);
+          setLossReadings(db.lossReadings);
+          setBackupsList([]);
+          
+          await saveToStorage(INITIAL_STATIONS, INITIAL_SUPPLY_POINTS, INITIAL_CATEGORIES, db.readings, INITIAL_LOSS_OBJECTS, db.lossReadings);
+        }
+      } catch (err) {
+        console.error("Error loading data from IndexedDB", err);
+      } finally {
+        setIsDataLoading(false);
+      }
     }
+
+    loadData();
 
     const savedTheme = localStorage.getItem('st_theme');
     if (savedTheme === 'light') setDarkTheme(false);
   }, []);
 
-  const saveToStorage = (
+  const saveToStorage = async (
     st: Station[], sps: SupplyPoint[], cats: string[],
     rds: Reading[], los: LossObject[], lrs: LossReading[]
   ) => {
     try {
-      localStorage.setItem('st_stations', JSON.stringify(st));
-      localStorage.setItem('st_supply_points', JSON.stringify(sps));
-      localStorage.setItem('st_categories', JSON.stringify(cats));
-      localStorage.setItem('st_readings', JSON.stringify(rds));
-      localStorage.setItem('st_loss_objects', JSON.stringify(los));
-      localStorage.setItem('st_loss_readings', JSON.stringify(lrs));
+      await dbSet('st_stations', st);
+      await dbSet('st_supply_points', sps);
+      await dbSet('st_categories', cats);
+      await dbSet('st_readings', rds);
+      await dbSet('st_loss_objects', los);
+      await dbSet('st_loss_readings', lrs);
     } catch (e) {
-      console.warn("Local storage write failed (quota exceeded?)", e);
+      console.warn("IndexedDB write failed", e);
     }
 
     // Auto backup on change if enabled
@@ -259,9 +311,9 @@ export default function App() {
           name: `Авто-копия системы (${timeStr})`,
           data: payload
         };
-        const currentList: BackupItem[] = JSON.parse(localStorage.getItem('st_backups_list') || '[]');
+        const currentList: BackupItem[] = await dbGet<BackupItem[]>('st_backups_list') || [];
         const updated = [newBackup, ...currentList].slice(0, 15);
-        localStorage.setItem('st_backups_list', JSON.stringify(updated));
+        await dbSet('st_backups_list', updated);
         
         // Sync React state without blocking standard main thread execution and causing re-render loops
         setTimeout(() => {
@@ -2071,7 +2123,7 @@ export default function App() {
     }
   };
 
-  const handleCreateManualBackup = () => {
+  const handleCreateManualBackup = async () => {
     const payload = JSON.stringify({ stations, supplyPoints, categories, readings, lossObjects, lossReadings });
     const d = new Date();
     const timeStr = d.toLocaleString('ru-RU');
@@ -2087,7 +2139,7 @@ export default function App() {
     
     const updated = [newBackup, ...backupsList].slice(0, 15);
     setBackupsList(updated);
-    localStorage.setItem('st_backups_list', JSON.stringify(updated));
+    await dbSet('st_backups_list', updated);
     alert("Резервная копия успешно создана в памяти устройства!");
   };
 
@@ -2125,10 +2177,10 @@ export default function App() {
       isOpen: true,
       title: "Удалить точку восстановления?",
       message: "Вы уверены, что хотите окончательно удалить эту резервную копию?",
-      onConfirm: () => {
+      onConfirm: async () => {
         const updated = backupsList.filter(b => b.id !== id);
         setBackupsList(updated);
-        localStorage.setItem('st_backups_list', JSON.stringify(updated));
+        await dbSet('st_backups_list', updated);
       }
     });
   };
@@ -2161,6 +2213,22 @@ export default function App() {
     reader.readAsText(file);
     e.target.value = ''; // Reset input to allow selecting same file again
   };
+
+  if (isDataLoading) {
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center ${darkTheme ? 'bg-[#0f172a] text-slate-100' : 'bg-[#f8fafc] text-slate-800'}`}>
+        <div className="flex flex-col items-center gap-4 max-w-sm px-6 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <RefreshCw className="w-7 h-7 text-white animate-spin animate-infinite" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold tracking-tight">Энергомониторинг РЖД</h2>
+            <p className="text-xs text-slate-400 mt-1">Загрузка автономной базы данных...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // --- FILTERED ARRAYS ---
   const stationsListFiltered = useMemo(() => {

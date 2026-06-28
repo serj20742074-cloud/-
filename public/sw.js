@@ -73,11 +73,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For all other local assets, use a Stale-While-Revalidate strategy
+  // For all other local assets, use a Cache-First strategy with Network Fallback
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        // If valid response, cache it
+      if (cachedResponse) {
+        // Serve immediately from cache for offline responsiveness
+        // Try updating cache in background (Stale-While-Revalidate)
+        fetch(event.request).then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, networkResponse);
+            });
+          }
+        }).catch(() => {
+          // Fail silently in background if offline
+        });
+        return cachedResponse;
+      }
+
+      // If not cached, fetch from network
+      return fetch(event.request).then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200) {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -86,11 +101,16 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       }).catch((err) => {
-        console.log('[Service Worker] Fetch failed, probably offline', err);
+        console.warn('[Service Worker] Fetch failed offline for:', event.request.url, err);
+        // Avoid returning undefined to prevent browser app load crashes
+        if (event.request.destination === 'image') {
+          return caches.match('icon.jpg') || new Response('', { status: 404 });
+        }
+        return new Response('Автономный режим: ресурс недоступен', { 
+          status: 503, 
+          statusText: 'Service Unavailable' 
+        });
       });
-
-      // Return cached version immediately if we have it, otherwise wait for network
-      return cachedResponse || fetchPromise;
     })
   );
 });
