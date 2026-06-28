@@ -1,9 +1,9 @@
 const CACHE_NAME = 'energy-monitor-v1';
 const PRECACHE_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icon.jpg'
+  './',
+  'index.html',
+  'manifest.json',
+  'icon.jpg'
 ];
 
 // Install Event: pre-cache the shell files
@@ -67,7 +67,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request).catch(() => {
         console.log('[Service Worker] Offline: serving index.html shell');
-        return caches.match('/index.html');
+        return caches.match('index.html') || caches.match('./');
       })
     );
     return;
