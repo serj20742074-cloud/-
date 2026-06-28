@@ -10,6 +10,14 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="apple-touch-icon" href="icon.jpg" />
     <script>
+      // Redirect to trailing slash for GitHub Pages to ensure relative paths resolve correctly
+      if (window.location.hostname.includes('github.io')) {
+        const path = window.location.pathname;
+        if (!path.endsWith('/') && !path.split('/').pop().includes('.')) {
+          window.location.replace(window.location.href + '/');
+        }
+      }
+
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           // Calculate base path for subdirectory support (e.g. GitHub Pages)
