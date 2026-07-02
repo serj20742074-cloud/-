@@ -10,6 +10,38 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="apple-touch-icon" href="icon.jpg" />
     <script>
+      // Clear cache helper query parameter to recover from corrupted state or service worker lockups
+      if (window.location.search.includes('clear-cache=true') || window.location.hash.includes('clear-cache=true')) {
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+          if (window.indexedDB && window.indexedDB.deleteDatabase) {
+            window.indexedDB.deleteDatabase('energy-monitor-db');
+          }
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+              for (var i = 0; i < registrations.length; i++) {
+                registrations[i].unregister();
+              }
+            });
+          }
+          if (window.caches && window.caches.keys) {
+            window.caches.keys().then(function(keys) {
+              keys.forEach(function(key) {
+                window.caches.delete(key);
+              });
+            });
+          }
+        } catch (e) {
+          console.error('Failed to clear caches:', e);
+        }
+        // Redirect to a clean path
+        setTimeout(function() {
+          var cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
+          window.location.replace(cleanUrl);
+        }, 800);
+      }
+
       // Ensure trailing slash for subdirectory deployments (e.g. GitHub Pages) 
       // to guarantee relative assets (./assets/...) resolve to the correct folder path.
       (function() {
