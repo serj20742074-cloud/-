@@ -2214,6 +2214,15 @@ export default function App() {
     e.target.value = ''; // Reset input to allow selecting same file again
   };
 
+  // --- FILTERED ARRAYS ---
+  const stationsListFiltered = useMemo(() => {
+    return stations.filter(s => s.name.toLowerCase().includes(stationSearch.toLowerCase()) || s.note.toLowerCase().includes(stationSearch.toLowerCase()));
+  }, [stations, stationSearch]);
+
+  const pointsListFiltered = useMemo(() => {
+    return supplyPoints.filter(p => p.name.toLowerCase().includes(pointSearch.toLowerCase()) || p.note.toLowerCase().includes(pointSearch.toLowerCase()));
+  }, [supplyPoints, pointSearch]);
+
   if (isDataLoading) {
     return (
       <div className={`min-h-screen flex flex-col items-center justify-center ${darkTheme ? 'bg-[#0f172a] text-slate-100' : 'bg-[#f8fafc] text-slate-800'}`}>
@@ -2229,15 +2238,6 @@ export default function App() {
       </div>
     );
   }
-
-  // --- FILTERED ARRAYS ---
-  const stationsListFiltered = useMemo(() => {
-    return stations.filter(s => s.name.toLowerCase().includes(stationSearch.toLowerCase()) || s.note.toLowerCase().includes(stationSearch.toLowerCase()));
-  }, [stations, stationSearch]);
-
-  const pointsListFiltered = useMemo(() => {
-    return supplyPoints.filter(p => p.name.toLowerCase().includes(pointSearch.toLowerCase()) || p.note.toLowerCase().includes(pointSearch.toLowerCase()));
-  }, [supplyPoints, pointSearch]);
 
   return (
     <div className={`min-h-screen text-sans flex flex-col transition-colors duration-150 select-none ${darkTheme ? 'bg-[#0f172a] text-slate-100' : 'bg-[#f8fafc] text-slate-800'}`}>
