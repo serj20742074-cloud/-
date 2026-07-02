@@ -66,6 +66,35 @@ const RUSSIAN_MONTHS_SHORT = [
   "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"
 ];
 
+const PERIOD_OPTIONS = [
+  { id: "1", name: "Январь", months: [1] },
+  { id: "2", name: "Февраль", months: [2] },
+  { id: "3", name: "Март", months: [3] },
+  { id: "4", name: "Апрель", months: [4] },
+  { id: "5", name: "Май", months: [5] },
+  { id: "6", name: "Июнь", months: [6] },
+  { id: "7", name: "Июль", months: [7] },
+  { id: "8", name: "Август", months: [8] },
+  { id: "9", name: "Сентябрь", months: [9] },
+  { id: "10", name: "Октябрь", months: [10] },
+  { id: "11", name: "Ноябрь", months: [11] },
+  { id: "12", name: "Декабрь", months: [12] },
+  { id: "2m", name: "2 месяца", months: [1, 2] },
+  { id: "q1", name: "1 квартал", months: [1, 2, 3] },
+  { id: "4m", name: "4 месяца", months: [1, 2, 3, 4] },
+  { id: "5m", name: "5 месяцев", months: [1, 2, 3, 4, 5] },
+  { id: "q2", name: "2 квартал", months: [4, 5, 6] },
+  { id: "h1", name: "Полугодие", months: [1, 2, 3, 4, 5, 6] },
+  { id: "7m", name: "7 месяцев", months: [1, 2, 3, 4, 5, 6, 7] },
+  { id: "8m", name: "8 месяцев", months: [1, 2, 3, 4, 5, 6, 7, 8] },
+  { id: "q3", name: "3 квартал", months: [7, 8, 9] },
+  { id: "9m", name: "9 месяцев", months: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
+  { id: "10m", name: "10 месяцев", months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+  { id: "11m", name: "11 месяцев", months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+  { id: "q4", name: "4 квартал", months: [10, 11, 12] },
+  { id: "12m", name: "12 месяцев", months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }
+];
+
 export default function App() {
   // --- CORE DATABASE STATE ---
   const [stations, setStations] = useState<Station[]>([]);
@@ -78,6 +107,7 @@ export default function App() {
   // Themes & UI tabs state
   const [darkTheme, setDarkTheme] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<string>('home');
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>('6'); // Defaults to June (month 6)
   const [selectedMonth, setSelectedMonth] = useState<number>(6); // June
   const [selectedYear, setSelectedYear] = useState<number>(2026);
 
@@ -344,22 +374,32 @@ export default function App() {
     localStorage.setItem('st_theme', next ? 'dark' : 'light');
   };
 
+  const selectedMonthsList = useMemo(() => {
+    const period = PERIOD_OPTIONS.find(p => p.id === selectedPeriodId);
+    return period ? period.months : [selectedMonth];
+  }, [selectedPeriodId, selectedMonth]);
+
+  const selectedPeriodName = useMemo(() => {
+    const period = PERIOD_OPTIONS.find(p => p.id === selectedPeriodId);
+    return period ? period.name : RUSSIAN_MONTHS[selectedMonth - 1];
+  }, [selectedPeriodId, selectedMonth]);
+
   // --- MEMOIZED DERIVED METRICS FOR SELECTED PERIOD ---
   const activeMonthReadings = useMemo(() => {
-    return readings.filter(r => r.year === selectedYear && r.month === selectedMonth);
-  }, [readings, selectedYear, selectedMonth]);
+    return readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month));
+  }, [readings, selectedYear, selectedMonthsList]);
 
   const prevYearMonthReadings = useMemo(() => {
-    return readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth);
-  }, [readings, selectedYear, selectedMonth]);
+    return readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month));
+  }, [readings, selectedYear, selectedMonthsList]);
 
   const activeLossReadings = useMemo(() => {
-    return lossReadings.filter(r => r.year === selectedYear && r.month === selectedMonth);
-  }, [lossReadings, selectedYear, selectedMonth]);
+    return lossReadings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month));
+  }, [lossReadings, selectedYear, selectedMonthsList]);
 
   const prevYearLossReadings = useMemo(() => {
-    return lossReadings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth);
-  }, [lossReadings, selectedYear, selectedMonth]);
+    return lossReadings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month));
+  }, [lossReadings, selectedYear, selectedMonthsList]);
 
   // Overall calculations (Totals)
   const totalCurrValues = useMemo(() => activeMonthReadings.reduce((sum, r) => sum + r.value, 0), [activeMonthReadings]);
@@ -383,10 +423,10 @@ export default function App() {
 
     stations.forEach(st => {
       const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
-      const curr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-      const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
       const deltaAbs = curr - prev;
-      const deltaPct = prev > 0 ? (deltaAbs / prev) * 105 - 105 : 0; // standard mathematical percentage
+      const deltaPct = prev > 0 ? (deltaAbs / prev) * 100 : 0;
 
       list.push({ station: st, current: curr, prev, deltaAbs, deltaPct });
     });
@@ -395,7 +435,7 @@ export default function App() {
     const savings = [...list].filter(l => l.deltaAbs < 0).sort((a, b) => a.deltaAbs - b.deltaAbs);
 
     return { overruns, savings };
-  }, [stations, supplyPoints, readings, selectedYear, selectedMonth]);
+  }, [stations, supplyPoints, readings, selectedYear, selectedMonthsList]);
 
   // Station Detail Analytics
   const activeStation = useMemo(() => {
@@ -466,18 +506,18 @@ export default function App() {
 
   // --- EXPORT TO WORD (.DOC) ---
   const exportReportToDoc = () => {
-    const currentMonthLabel = RUSSIAN_MONTHS[selectedMonth - 1];
+    const currentMonthLabel = selectedPeriodName;
     const reportTitle = "АНАЛИТИЧЕСКИЙ ЭНЕРГЕТИЧЕСКИЙ ОТЧЕТ";
     const reportSubtitle = `Учетный период: ${currentMonthLabel} ${selectedYear} года (в сравнении с аналогичным периодом прошлого года)`;
 
     // Calculate overall totals
     const totalCurrent = stations.reduce((sum, st) => {
       const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
-      return sum + readings.filter(r => r.year === selectedYear && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      return sum + readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
     }, 0);
     const totalPrev = stations.reduce((sum, st) => {
       const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
-      return sum + readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      return sum + readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
     }, 0);
     const totalDiff = totalCurrent - totalPrev;
     const totalPct = totalPrev > 0 ? (totalDiff / totalPrev) * 100 : 0;
@@ -485,8 +525,8 @@ export default function App() {
     // Generate table rows for individual stations
     const stationsRows = stations.map(st => {
       const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
-      const curr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-      const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
       const diff = curr - prev;
       const pct = prev > 0 ? (diff / prev) * 100 : 0;
       const isSaving = diff < 0;
@@ -511,8 +551,8 @@ export default function App() {
       const catPoints = supplyPoints.filter(p => p.category === cat && p.isActive);
       const pointsData = catPoints.map(p => {
         const station = stations.find(s => s.id === p.stationId);
-        const currVal = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
-        const prevVal = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+        const currVal = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+        const prevVal = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
         const diffVal = currVal - prevVal;
         const pctVal = prevVal > 0 ? (diffVal / prevVal) * 100 : 0;
 
@@ -3173,7 +3213,7 @@ export default function App() {
               }
             });
             
-            const curMonthReadings = readings.filter(rd => rd.year === selectedYear && rd.month === selectedMonth);
+            const curMonthReadings = readings.filter(rd => rd.year === selectedYear && selectedMonthsList.includes(rd.month));
             curMonthReadings.forEach(rd => {
               const p = spsMap.get(rd.supplyPointId);
               if (p) {
@@ -3202,7 +3242,7 @@ export default function App() {
               let sMeterVal = 0;
               let sEstimatedVal = 0;
               
-              const sReadings = readings.filter(rd => rd.year === selectedYear && rd.month === selectedMonth && stationSpsIds.includes(rd.supplyPointId));
+              const sReadings = readings.filter(rd => rd.year === selectedYear && selectedMonthsList.includes(rd.month) && stationSpsIds.includes(rd.supplyPointId));
               sReadings.forEach(rd => {
                 const p = stationSpsMap.get(rd.supplyPointId);
                 if (p) {
@@ -3540,8 +3580,8 @@ export default function App() {
                             });
                             const spsIds = filteredPoints.map(p => p.id);
 
-                            const curr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                            const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                            const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                            const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                             const diff = curr - prev;
                             const pct = prev > 0 ? (diff / prev) * 100 : 0;
                             const isSelected = selectedReportStationId === st.id;
@@ -3549,8 +3589,8 @@ export default function App() {
                             // Calculate breakdown for visual indicators under station name
                             const stationMeterPoints = rawPoints.filter(p => p.calculationMethod !== 'estimated');
                             const stationEstimatedPoints = rawPoints.filter(p => p.calculationMethod === 'estimated');
-                            const meterKwh = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && stationMeterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                            const estimatedKwh = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && stationEstimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                            const meterKwh = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stationMeterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                            const estimatedKwh = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stationEstimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                             const totalKwh = meterKwh + estimatedKwh;
                             const meterPct = totalKwh > 0 ? (meterKwh / totalKwh) * 100 : 0;
                             const estimatedPct = totalKwh > 0 ? (estimatedKwh / totalKwh) * 100 : 0;
@@ -3684,8 +3724,8 @@ export default function App() {
                               </thead>
                               <tbody className="divide-y divide-slate-800/40">
                                 {reportSupplyPoints.map(p => {
-                                  const currPt = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
-                                  const prevPt = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                  const currPt = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                  const prevPt = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
                                   const diffPt = currPt - prevPt;
                                   const isPtSelected = selectedReportSupplyPointId === p.id;
 
@@ -3766,7 +3806,7 @@ export default function App() {
                               {/* X Axis Months Label */}
                               {RUSSIAN_MONTHS_SHORT.map((mName, idx) => {
                                 const xPos = rpXOf(idx);
-                                const isCurrentMonthHighlight = (idx + 1) === selectedMonth;
+                                const isCurrentMonthHighlight = selectedMonthsList.includes(idx + 1);
                                 return (
                                   <g key={idx}>
                                     <text 
@@ -3798,7 +3838,7 @@ export default function App() {
                                   key={`prev-${idx}`}
                                   cx={rpXOf(idx)}
                                   cy={rpYOf(val)}
-                                  r={(idx + 1) === selectedMonth ? "5" : "3.5"}
+                                  r={selectedMonthsList.includes(idx + 1) ? "5" : "3.5"}
                                   fill={darkTheme ? "#0f172a" : "#ffffff"}
                                   stroke="#06b6d4"
                                   strokeWidth="2"
@@ -3821,7 +3861,7 @@ export default function App() {
                                   key={`curr-${idx}`}
                                   cx={rpXOf(idx)}
                                   cy={rpYOf(val)}
-                                  r={(idx + 1) === selectedMonth ? "5" : "3.5"}
+                                  r={selectedMonthsList.includes(idx + 1) ? "5" : "3.5"}
                                   fill={darkTheme ? "#0f172a" : "#ffffff"}
                                   stroke="#f59e0b"
                                   strokeWidth="2.5"
@@ -3872,8 +3912,8 @@ export default function App() {
                     {categories.map(cat => {
                       const catPoints = supplyPoints.filter(p => p.category === cat && p.isActive);
                       const catPtIds = catPoints.map(p => p.id);
-                      const catCurrSum = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                      const catPrevSum = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                      const catCurrSum = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                      const catPrevSum = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                       const catDiff = catCurrSum - catPrevSum;
                       const catPct = catPrevSum > 0 ? (catDiff / catPrevSum) * 100 : 0;
                       const isCatSelected = selectedReportCategoryId === cat;
@@ -3933,8 +3973,8 @@ export default function App() {
                     });
 
                     // Calculations
-                    const currentSum = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                    const previousSum = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const currentSum = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const previousSum = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                     const delta = currentSum - previousSum;
                     const pctDelta = previousSum > 0 ? (delta / previousSum) * 100 : 0;
 
@@ -3943,8 +3983,8 @@ export default function App() {
                       const stPointsInCat = catPoints.filter(p => p.stationId === st.id);
                       if (stPointsInCat.length === 0) return null;
                       const ptIds = stPointsInCat.map(p => p.id);
-                      const curr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && ptIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                      const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && ptIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && ptIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && ptIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                       const diff = curr - prev;
                       const pct = prev > 0 ? (diff / prev) * 100 : 0;
                       return {
@@ -3960,8 +4000,8 @@ export default function App() {
                     // Detailed points in category
                     const pointCalculations = catPoints.map(p => {
                       const st = stations.find(s => s.id === p.stationId);
-                      const curr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
-                      const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
                       const diff = curr - prev;
                       const pct = prev > 0 ? (diff / prev) * 100 : 0;
                       return {
@@ -4280,13 +4320,13 @@ export default function App() {
                     const meterPoints = supplyPoints.filter(p => p.isActive && p.calculationMethod !== 'estimated');
                     const estimatedPoints = supplyPoints.filter(p => p.isActive && p.calculationMethod === 'estimated');
 
-                    const meterCurr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && meterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                    const meterPrev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && meterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const meterCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && meterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const meterPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && meterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                     const meterDiff = meterCurr - meterPrev;
                     const meterPct = meterPrev > 0 ? (meterDiff / meterPrev) * 100 : 0;
 
-                    const estCurr = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && estimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                    const estPrev = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && estimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const estCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && estimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const estPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && estimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                     const estDiff = estCurr - estPrev;
                     const estPct = estPrev > 0 ? (estDiff / estPrev) * 100 : 0;
 
@@ -4389,8 +4429,8 @@ export default function App() {
                                     const stMeterPoints = stPoints.filter(p => p.calculationMethod !== 'estimated');
                                     const stEstPoints = stPoints.filter(p => p.calculationMethod === 'estimated');
 
-                                    const stMeterVal = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && stMeterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
-                                    const stEstVal = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && stEstPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                                    const stMeterVal = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stMeterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                                    const stEstVal = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stEstPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
                                     const stTotal = stMeterVal + stEstVal;
                                     const stEstPct = stTotal > 0 ? (stEstVal / stTotal) * 100 : 0;
 
@@ -4431,8 +4471,8 @@ export default function App() {
                             <div className="overflow-y-auto max-h-[350px] space-y-2.5 pr-1">
                               {estimatedPoints.map(p => {
                                 const st = stations.find(s => s.id === p.stationId);
-                                const currVal = readings.filter(r => r.year === selectedYear && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
-                                const prevVal = readings.filter(r => r.year === selectedYear - 1 && r.month === selectedMonth && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                const currVal = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                const prevVal = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
                                 const diff = currVal - prevVal;
 
                                 return (
@@ -4487,8 +4527,8 @@ export default function App() {
                   {/* Карточки KPI */}
                   {(() => {
                     const allLossObjectsWithValues = lossObjects.map(lo => {
-                      const curr = lossReadings.find(r => r.lossObjectId === lo.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
-                      const prev = lossReadings.find(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+                      const curr = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+                      const prev = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
                       const diff = curr - prev;
                       const pct = prev > 0 ? (diff / prev) * 100 : 0;
                       return { lo, curr, prev, diff, pct };
@@ -4500,7 +4540,7 @@ export default function App() {
                     const totalLossPct = totalLossPrev > 0 ? (totalLossDiff / totalLossPrev) * 100 : 0;
 
                     const totalConsumptionCurr = supplyPoints.filter(p => p.isActive).reduce((sum, p) => {
-                      return sum + (readings.find(r => r.supplyPointId === p.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0);
+                      return sum + readings.filter(r => r.supplyPointId === p.id && r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((s, r) => s + r.value, 0);
                     }, 0);
                     const lossRatio = (totalConsumptionCurr + totalLossCurr) > 0 
                       ? (totalLossCurr / (totalConsumptionCurr + totalLossCurr)) * 100 
@@ -4624,11 +4664,21 @@ export default function App() {
                               })}
 
                               {/* Подписи месяцев по оси X */}
-                              {RUSSIAN_MONTHS.map((mName, idx) => (
-                                <text key={idx} x={lXOf(idx)} y={lH - 12} textAnchor="middle" fill={darkTheme ? "#64748b" : "#94a3b8"} className="text-[8px] font-semibold">
-                                  {mName.substring(0, 3)}
-                                </text>
-                              ))}
+                              {RUSSIAN_MONTHS.map((mName, idx) => {
+                                const isCurrentMonthHighlight = selectedMonthsList.includes(idx + 1);
+                                return (
+                                  <text
+                                    key={idx}
+                                    x={lXOf(idx)}
+                                    y={lH - 12}
+                                    textAnchor="middle"
+                                    fill={isCurrentMonthHighlight ? (darkTheme ? "#60a5fa" : "#2563eb") : (darkTheme ? "#64748b" : "#94a3b8")}
+                                    className={`text-[8px] ${isCurrentMonthHighlight ? "font-extrabold" : "font-semibold"}`}
+                                  >
+                                    {mName.substring(0, 3)}
+                                  </text>
+                                );
+                              })}
 
                               {/* Линия прошлого года */}
                               <path
@@ -4653,7 +4703,7 @@ export default function App() {
                                   key={`lcurr-${idx}`}
                                   cx={lXOf(idx)}
                                   cy={lYOf(val)}
-                                  r={(idx + 1) === selectedMonth ? "5" : "3.5"}
+                                  r={selectedMonthsList.includes(idx + 1) ? "5" : "3.5"}
                                   fill={darkTheme ? "#0f172a" : "#ffffff"}
                                   stroke="#f43f5e"
                                   strokeWidth="2.5"
@@ -4703,10 +4753,10 @@ export default function App() {
                                     const stationsLossesCalculations = stations.map(st => {
                                       const stLossObjects = lossObjects.filter(lo => lo.stationId === st.id);
                                       const curr = stLossObjects.reduce((sum, lo) => {
-                                        return sum + (lossReadings.find(r => r.lossObjectId === lo.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0);
+                                        return sum + lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((s, r) => s + r.value, 0);
                                       }, 0);
                                       const prev = stLossObjects.reduce((sum, lo) => {
-                                        return sum + (lossReadings.find(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0);
+                                        return sum + lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((s, r) => s + r.value, 0);
                                       }, 0);
                                       const diff = curr - prev;
                                       const pct = prev > 0 ? (diff / prev) * 100 : 0;
@@ -4817,8 +4867,8 @@ export default function App() {
                                     });
 
                                     const lossObjectsCalculations = filteredLossObjects.map(lo => {
-                                      const curr = lossReadings.find(r => r.lossObjectId === lo.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
-                                      const prev = lossReadings.find(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+                                      const curr = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+                                       const prev = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
                                       const diff = curr - prev;
                                       const pct = prev > 0 ? (diff / prev) * 100 : 0;
                                       const station = stations.find(s => s.id === lo.stationId);
@@ -5022,7 +5072,7 @@ export default function App() {
                                        key={`lsingle-${idx}`}
                                        cx={sXOf(idx)}
                                        cy={sYOf(val)}
-                                       r={(idx + 1) === selectedMonth ? "5" : "3.5"}
+                                       r={selectedMonthsList.includes(idx + 1) ? "5" : "3.5"}
                                        fill={darkTheme ? "#0f172a" : "#ffffff"}
                                        stroke="#6366f1"
                                        strokeWidth="2.5"
