@@ -2311,11 +2311,22 @@ export default function App() {
         {/* Filters */}
         <div className="flex items-center gap-2">
           <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(Number(e.target.value))}
+            value={selectedPeriodId}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedPeriodId(val);
+              const opt = PERIOD_OPTIONS.find(p => p.id === val);
+              if (opt && opt.months.length > 0) {
+                setSelectedMonth(opt.months[opt.months.length - 1]);
+              }
+            }}
             className={`px-3 py-1.5 rounded-lg text-xs border font-semibold outline-none cursor-pointer ${darkTheme ? 'bg-slate-800 border-slate-705 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
           >
-            {RUSSIAN_MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            {PERIOD_OPTIONS.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.name}
+              </option>
+            ))}
           </select>
           <select
             value={selectedYear}
@@ -3148,7 +3159,7 @@ export default function App() {
                             placeholder="0"
                             className={`w-32 text-right px-3 py-2 rounded text-xs border outline-none font-mono font-bold ${darkTheme ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white'}`}
                           />
-                          <span className="text-xs text-slate-400 font-semibold">кВт·ч за {RUSSIAN_MONTHS[selectedMonth - 1]} {selectedYear} года</span>
+                          <span className="text-xs text-slate-400 font-semibold">кВт·ч за {selectedPeriodName} {selectedYear} года</span>
                         </div>
                         <p className="text-[10px] text-slate-450">Значение сохранится автоматически при изменении.</p>
                       </div>
@@ -3280,7 +3291,7 @@ export default function App() {
                       <p className="text-[10px] text-slate-400">Соотношение коммерческого учета по приборам и оценочного расчетного способа</p>
                     </div>
                     <span className="text-xs bg-slate-850 px-2.5 py-1 rounded font-semibold text-slate-350">
-                      Период: {RUSSIAN_MONTHS[selectedMonth - 1]} {selectedYear}
+                      Период: {selectedPeriodName} {selectedYear}
                     </span>
                   </div>
 
@@ -3435,7 +3446,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-3 border-slate-700/60">
                 <div>
                   <h3 className="font-extrabold text-sm">Генерация сводных отчетов</h3>
-                  <p className="text-[10px] text-slate-400">Учетный период: {RUSSIAN_MONTHS[selectedMonth - 1]} {selectedYear} года</p>
+                  <p className="text-[10px] text-slate-400">Учетный период: {selectedPeriodName} {selectedYear} года</p>
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-3">
@@ -5043,11 +5054,21 @@ export default function App() {
                                    })}
 
                                    {/* Подписи месяцев по оси X */}
-                                   {RUSSIAN_MONTHS.map((mName, idx) => (
-                                     <text key={idx} x={sXOf(idx)} y={sH - 12} textAnchor="middle" fill={darkTheme ? "#64748b" : "#94a3b8"} className="text-[8px] font-semibold">
-                                       {mName.substring(0, 3)}
-                                     </text>
-                                   ))}
+                                   {RUSSIAN_MONTHS.map((mName, idx) => {
+                                     const isCurrentMonthHighlight = selectedMonthsList.includes(idx + 1);
+                                     return (
+                                       <text
+                                         key={idx}
+                                         x={sXOf(idx)}
+                                         y={sH - 12}
+                                         textAnchor="middle"
+                                         fill={isCurrentMonthHighlight ? (darkTheme ? "#818cf8" : "#4f46e5") : (darkTheme ? "#64748b" : "#94a3b8")}
+                                         className={`text-[8px] ${isCurrentMonthHighlight ? "font-extrabold" : "font-semibold"}`}
+                                       >
+                                         {mName.substring(0, 3)}
+                                       </text>
+                                     );
+                                   })}
 
                                    {/* Линия прошлого года */}
                                    <path
@@ -5548,7 +5569,7 @@ export default function App() {
                     </span>
                   </h3>
                   <p className="text-[10px] text-slate-450 font-semibold uppercase tracking-wider mt-0.5">
-                    Автоматический аудит за {RUSSIAN_MONTHS[selectedMonth - 1]} {selectedYear} г.
+                    Автоматический аудит за {selectedPeriodName} {selectedYear} г.
                   </p>
                 </div>
               </div>
