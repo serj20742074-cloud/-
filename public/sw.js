@@ -102,14 +102,33 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       }).catch((err) => {
         console.warn('[Service Worker] Fetch failed offline for:', event.request.url, err);
-        // Avoid returning undefined to prevent browser app load crashes
+        
+        // Handle HTML page navigation offline requests
+        if (event.request.destination === 'document') {
+          return new Response(
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Автономный режим</title></head>' +
+            '<body style="font-family:sans-serif;text-align:center;padding:50px;background:#0f172a;color:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh">' +
+            '<div style="max-width:400px;padding:24px;border-radius:16px;background:#1e293b;box-shadow:0 10px 15px -3px rgba(0,0,0,0.3)">' +
+            '<h2 style="margin:0 0 10px 0;font-size:20px">Энергомониторинг РЖД</h2>' +
+            '<p style="font-size:14px;color:#94a3b8;line-height:1.5">Приложение запущено в автономном режиме. Данный раздел недоступен без подключения к сети.</p>' +
+            '<button onclick="window.location.reload()" style="margin-top:15px;padding:10px 20px;border:none;border-radius:8px;background:#2563eb;color:#ffffff;font-weight:bold;cursor:pointer">Повторить попытку</button>' +
+            '</div>' +
+            '</body></html>',
+            { 
+              status: 503, 
+              headers: { 'Content-Type': 'text/html; charset=utf-8' } 
+            }
+          );
+        }
+
+        // Handle image requests
         if (event.request.destination === 'image') {
           return caches.match('icon.jpg') || new Response('', { status: 404 });
         }
-        return new Response('Автономный режим: ресурс недоступен', { 
-          status: 503, 
-          statusText: 'Service Unavailable' 
-        });
+
+        // Let other assets (js, css, etc.) fail naturally in the browser 
+        // to prevent parsing errors/white screen caused by custom 503 text
+        throw err;
       });
     })
   );
