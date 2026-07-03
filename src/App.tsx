@@ -2698,7 +2698,6 @@ export default function App() {
 
             </div>
           )}
-
           {/* TAB 2: СТАНЦИИ (STATION CARDS & MANAGEMENT) */}
           {activeTab === 'stations' && (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
