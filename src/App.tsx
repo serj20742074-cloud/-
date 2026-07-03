@@ -1429,28 +1429,19 @@ export default function App() {
           const consumerClean = cand.consumer.toLowerCase().trim();
           const meterClean = cand.meter ? cand.meter.trim() : "";
 
-          // If stationMatch is provided, STRICTLY look within this station first
+          // --- 1. LOCAL SEARCH (inside specified stationMatch if provided) ---
           if (stationMatch) {
-            // 1. Try exact meter match inside the station (high precision)
+            // 1a. Try exact meter match inside the station
             if (meterClean) {
               const byMeterInStation = pointsList.find(p => p.stationId === stationMatch.id && p.meterNumber && p.meterNumber.trim() === meterClean);
               if (byMeterInStation) return byMeterInStation;
             }
 
-            // 2. Try exact name match inside the station
+            // 1b. Try exact name match inside the station
             const exactMatchInStation = pointsList.find(p => p.stationId === stationMatch.id && p.name.toLowerCase().trim() === consumerClean);
             if (exactMatchInStation) return exactMatchInStation;
 
-            // 3. Try fuzzy meter match inside notes or name inside the station
-            if (meterClean) {
-              const byMeterInNoteInStation = pointsList.find(p => 
-                p.stationId === stationMatch.id && 
-                ((p.note && p.note.includes(meterClean)) || p.name.includes(meterClean))
-              );
-              if (byMeterInNoteInStation) return byMeterInNoteInStation;
-            }
-
-            // 4. Try fuzzy name comparison inside the station
+            // 1c. Try fuzzy name comparison inside the station
             const candCleaned = cleanCompareStr(cand.consumer);
             if (candCleaned.length > 1) {
               const matchInStation = pointsList.find(p => {
@@ -1461,40 +1452,47 @@ export default function App() {
               if (matchInStation) return matchInStation;
             }
 
-            // 5. Fallback ONLY for unique meter globally (in case the station was classified differently in the sheet but has a unique meter)
+            // 1d. Try fuzzy meter match inside notes or name inside the station
             if (meterClean) {
-              const byMeterGlobal = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
-              if (byMeterGlobal) return byMeterGlobal;
+              const byMeterInNoteInStation = pointsList.find(p => 
+                p.stationId === stationMatch.id && 
+                ((p.note && p.note.includes(meterClean)) || p.name.includes(meterClean))
+              );
+              if (byMeterInNoteInStation) return byMeterInNoteInStation;
             }
-
-            // If stationMatch is set and we found absolutely nothing inside that station (nor a global unique meter match),
-            // return null so that a new supply point is created STRICTLY inside this station.
-            // This prevents name-only matching from hijacking points of other stations.
-            return null;
           }
 
-          // Fallback if stationMatch is not specified (unlikely, but for safety)
+          // --- 2. GLOBAL SEARCH (across all stations) ---
+          // Under no circumstances should we create a duplicate of an existing supply point.
+          // By matching it globally, we keep its original stationId unchanged.
+          
+          // 2a. Global exact meter match
           if (meterClean) {
-            const byMeter = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
-            if (byMeter) return byMeter;
-            
-            const byMeterInNote = pointsList.find(p => 
+            const byMeterGlobal = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
+            if (byMeterGlobal) return byMeterGlobal;
+          }
+
+          // 2b. Global exact name match
+          const exactMatchGlobal = pointsList.find(p => p.name.toLowerCase().trim() === consumerClean);
+          if (exactMatchGlobal) return exactMatchGlobal;
+
+          // 2c. Global fuzzy name match
+          const candCleanedGlobal = cleanCompareStr(cand.consumer);
+          if (candCleanedGlobal.length > 1) {
+            const matchGlobal = pointsList.find(p => {
+              const pCleaned = cleanCompareStr(p.name);
+              return pCleaned.length > 1 && (pCleaned.includes(candCleanedGlobal) || candCleanedGlobal.includes(pCleaned));
+            });
+            if (matchGlobal) return matchGlobal;
+          }
+
+          // 2d. Global fuzzy meter/note match
+          if (meterClean) {
+            const byMeterInNoteGlobal = pointsList.find(p => 
               (p.note && p.note.includes(meterClean)) || 
               p.name.includes(meterClean)
             );
-            if (byMeterInNote) return byMeterInNote;
-          }
-
-          const exactMatch = pointsList.find(p => p.name.toLowerCase().trim() === consumerClean);
-          if (exactMatch) return exactMatch;
-
-          const candCleaned = cleanCompareStr(cand.consumer);
-          if (candCleaned.length > 1) {
-            const matchGlobal = pointsList.find(p => {
-              const pCleaned = cleanCompareStr(p.name);
-              return pCleaned.length > 1 && (pCleaned.includes(candCleaned) || candCleaned.includes(pCleaned));
-            });
-            if (matchGlobal) return matchGlobal;
+            if (byMeterInNoteGlobal) return byMeterInNoteGlobal;
           }
 
           return null;
