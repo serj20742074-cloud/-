@@ -1590,22 +1590,7 @@ export default function App() {
                 const searchStr = rawTp.toLowerCase().includes("потери") ? rawTp : rawObj;
                 const stationMatch = findMatchingStation(rawObj, stationsState);
 
-                let matchLo = findMatchingLossObject(searchStr, stationMatch, lossObjectsState);
-
-                // If still not found, create a new loss object!
-                if (!matchLo) {
-                  const newLossId = `loss-orig-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-                  const defaultStationId = stationMatch?.id || (stationsState[0]?.id || undefined);
-                  const defaultSection = stationMatch?.section || (stationsState[0]?.section || "Прочие");
-                  matchLo = {
-                    id: newLossId,
-                    name: searchStr.toLowerCase().startsWith('потери') ? searchStr : `Потери - ${searchStr}`,
-                    stationId: defaultStationId,
-                    section: defaultSection,
-                    note: rawNote || "Созданы из ведомости"
-                  };
-                  lossObjectsState.push(matchLo);
-                }
+                const matchLo = findMatchingLossObject(searchStr, stationMatch, lossObjectsState);
 
                 if (matchLo) {
                   totalStandardImportCount++;
@@ -1914,55 +1899,33 @@ export default function App() {
               // Ensure it's clean and doesn't contain redundant "Станция" prefix
               stationName = stationName.replace(/^станция\s+/i, '').trim();
               
-              // Match the Station in the DB or dynamically create it!
-              let stationMatch = findMatchingStation(stationName, stationsState);
-              if (!stationMatch) {
-                const newStationId = `st-rjd-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-                stationMatch = {
-                  id: newStationId,
-                  name: `Станция ${stationName}`,
-                  section: categories[0] || "Прочие",
-                  note: "Импортирована из ведомости"
-                };
-                stationsState.push(stationMatch);
-              }
+              // Match the Station in the DB
+              const stationMatch = findMatchingStation(stationName, stationsState);
 
               if (cand.isLossesRow) {
                 // PROCESS NETWORK TECHNOLOGY LOSSES
-                let lossObj = findMatchingLossObject(cand.consumer, stationMatch, lossObjectsState);
+                const lossObj = findMatchingLossObject(cand.consumer, stationMatch, lossObjectsState);
 
-                if (!lossObj) {
-                  const newLossId = `loss-rjd-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-                  lossObj = {
-                    id: newLossId,
-                    name: cand.consumer.toLowerCase().startsWith('потери') ? cand.consumer : `Потери - ${cand.consumer}`,
-                    stationId: stationMatch?.id,
-                    section: stationMatch?.section || "Прочие",
-                    note: cand.note || "Созданы из ведомости"
-                  };
-                  lossObjectsState.push(lossObj);
-                }
-
-                // Apply values for detected years
-                const lossVals = [
-                  { y: detectedYears[0], v: cand.val2025 },
-                  { y: detectedYears[1], v: cand.val2026 }
-                ];
-                lossVals.forEach(item => {
-                  const matchIdx = lossReadingsState.findIndex(lr => lr.lossObjectId === lossObj?.id && lr.year === item.y && lr.month === detectedMonth);
-                  if (matchIdx > -1) {
-                    lossReadingsState[matchIdx].value = item.v;
-                  } else {
-                    if (lossObj) {
+                if (lossObj) {
+                  // Apply values for detected years
+                  const lossVals = [
+                    { y: detectedYears[0], v: cand.val2025 },
+                    { y: detectedYears[1], v: cand.val2026 }
+                  ];
+                  lossVals.forEach(item => {
+                    const matchIdx = lossReadingsState.findIndex(lr => lr.lossObjectId === lossObj.id && lr.year === item.y && lr.month === detectedMonth);
+                    if (matchIdx > -1) {
+                      lossReadingsState[matchIdx].value = item.v;
+                    } else {
                       lossReadingsState.push({ lossObjectId: lossObj.id, year: item.y, month: detectedMonth, value: item.v });
                     }
-                  }
-                });
-                totalRjdImportCount++;
+                  });
+                  totalRjdImportCount++;
+                }
 
               } else {
                 // PROCESS STANDARD METER SUPPLY POINT WITH ROBUST MATCHER
-                let matchSp = findMatchingSupplyPoint({ consumer: cand.consumer, meter: cand.meter }, stationMatch, pointsState);
+                const matchSp = findMatchingSupplyPoint({ consumer: cand.consumer, meter: cand.meter }, stationMatch, pointsState);
 
                 if (matchSp) {
                   if (cand.meter && !matchSp.meterNumber) {
@@ -1982,30 +1945,8 @@ export default function App() {
                     if (matchIdx > -1) {
                       readingsState[matchIdx].value = item.v;
                     } else {
-                      readingsState.push({ supplyPointId: matchSp!.id, year: item.y, month: detectedMonth, value: item.v });
+                      readingsState.push({ supplyPointId: matchSp.id, year: item.y, month: detectedMonth, value: item.v });
                     }
-                  });
-                  totalRjdImportCount++;
-                } else {
-                  // Dynamically create unmatched point to preserve readings and overshoot notes
-                  const newSpId = `tp-rjd-auto-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-                  const newSp = {
-                    id: newSpId,
-                    name: cand.consumer,
-                    stationId: stationMatch.id,
-                    category: "Прочие",
-                    note: cand.note || "Импортирована из ведомости",
-                    isActive: true,
-                    meterNumber: cand.meter || ""
-                  };
-                  pointsState.push(newSp);
-
-                  const vals = [
-                    { y: detectedYears[0], v: cand.val2025 },
-                    { y: detectedYears[1], v: cand.val2026 }
-                  ];
-                  vals.forEach(item => {
-                    readingsState.push({ supplyPointId: newSpId, year: item.y, month: detectedMonth, value: item.v });
                   });
                   totalRjdImportCount++;
                 }
