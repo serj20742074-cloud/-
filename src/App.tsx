@@ -1348,8 +1348,15 @@ export default function App() {
           
           const fileStr = nameInFile.toLowerCase().trim();
 
+          // If stationMatch is provided, strictly search within this station first
+          const scopedList = stationMatch 
+            ? lossList.filter(lo => lo.stationId === stationMatch.id)
+            : lossList;
+
+          if (scopedList.length === 0) return null;
+
           // 1. Direct exact/simple match
-          let match = lossList.find(lo => {
+          let match = scopedList.find(lo => {
             const configStr = lo.name.toLowerCase().trim();
             return configStr === fileStr;
           });
@@ -1357,7 +1364,7 @@ export default function App() {
 
           // 2. Direct substring match (case insensitive)
           // We sort the list descending by name length to ensure we match the most specific name first
-          const sortedList = [...lossList].sort((a, b) => b.name.length - a.name.length);
+          const sortedList = [...scopedList].sort((a, b) => b.name.length - a.name.length);
           match = sortedList.find(lo => {
             const configStr = lo.name.toLowerCase().trim();
             return fileStr.includes(configStr) || configStr.includes(fileStr);
@@ -1382,7 +1389,7 @@ export default function App() {
           let bestMatch: LossObject | null = null;
           let maxOverlap = 0;
 
-          for (const lo of lossList) {
+          for (const lo of scopedList) {
             const configWords = getWords(lo.name);
             const overlap = fileWords.filter(w => configWords.includes(w)).length;
             if (overlap > maxOverlap) {
@@ -1422,12 +1429,55 @@ export default function App() {
           const consumerClean = cand.consumer.toLowerCase().trim();
           const meterClean = cand.meter ? cand.meter.trim() : "";
 
-          // 1. Try to match by meter number first (high precision)
+          // If stationMatch is provided, STRICTLY look within this station first
+          if (stationMatch) {
+            // 1. Try exact meter match inside the station (high precision)
+            if (meterClean) {
+              const byMeterInStation = pointsList.find(p => p.stationId === stationMatch.id && p.meterNumber && p.meterNumber.trim() === meterClean);
+              if (byMeterInStation) return byMeterInStation;
+            }
+
+            // 2. Try exact name match inside the station
+            const exactMatchInStation = pointsList.find(p => p.stationId === stationMatch.id && p.name.toLowerCase().trim() === consumerClean);
+            if (exactMatchInStation) return exactMatchInStation;
+
+            // 3. Try fuzzy meter match inside notes or name inside the station
+            if (meterClean) {
+              const byMeterInNoteInStation = pointsList.find(p => 
+                p.stationId === stationMatch.id && 
+                ((p.note && p.note.includes(meterClean)) || p.name.includes(meterClean))
+              );
+              if (byMeterInNoteInStation) return byMeterInNoteInStation;
+            }
+
+            // 4. Try fuzzy name comparison inside the station
+            const candCleaned = cleanCompareStr(cand.consumer);
+            if (candCleaned.length > 1) {
+              const matchInStation = pointsList.find(p => {
+                if (p.stationId !== stationMatch.id) return false;
+                const pCleaned = cleanCompareStr(p.name);
+                return pCleaned.length > 1 && (pCleaned.includes(candCleaned) || candCleaned.includes(pCleaned));
+              });
+              if (matchInStation) return matchInStation;
+            }
+
+            // 5. Fallback ONLY for unique meter globally (in case the station was classified differently in the sheet but has a unique meter)
+            if (meterClean) {
+              const byMeterGlobal = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
+              if (byMeterGlobal) return byMeterGlobal;
+            }
+
+            // If stationMatch is set and we found absolutely nothing inside that station (nor a global unique meter match),
+            // return null so that a new supply point is created STRICTLY inside this station.
+            // This prevents name-only matching from hijacking points of other stations.
+            return null;
+          }
+
+          // Fallback if stationMatch is not specified (unlikely, but for safety)
           if (meterClean) {
             const byMeter = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
             if (byMeter) return byMeter;
             
-            // Fuzzy match on meter inside notes or name
             const byMeterInNote = pointsList.find(p => 
               (p.note && p.note.includes(meterClean)) || 
               p.name.includes(meterClean)
@@ -1435,24 +1485,11 @@ export default function App() {
             if (byMeterInNote) return byMeterInNote;
           }
 
-          // 2. Try exact name match
           const exactMatch = pointsList.find(p => p.name.toLowerCase().trim() === consumerClean);
           if (exactMatch) return exactMatch;
 
-          // 3. Try to clean and compare names Speculatively
           const candCleaned = cleanCompareStr(cand.consumer);
           if (candCleaned.length > 1) {
-            // Match belonging to the station first to prioritize correct station
-            if (stationMatch) {
-              const stationPoints = pointsList.filter(p => p.stationId === stationMatch.id);
-              const matchInStation = stationPoints.find(p => {
-                const pCleaned = cleanCompareStr(p.name);
-                return pCleaned.length > 1 && (pCleaned.includes(candCleaned) || candCleaned.includes(pCleaned));
-              });
-              if (matchInStation) return matchInStation;
-            }
-
-            // Global match in all supply points if not found in station
             const matchGlobal = pointsList.find(p => {
               const pCleaned = cleanCompareStr(p.name);
               return pCleaned.length > 1 && (pCleaned.includes(candCleaned) || candCleaned.includes(pCleaned));
