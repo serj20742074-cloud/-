@@ -1429,6 +1429,53 @@ export default function App() {
           const consumerClean = cand.consumer.toLowerCase().trim();
           const meterClean = cand.meter ? cand.meter.trim() : "";
 
+          // Compatibility check helper to prevent wrong category matches
+          const isCompatible = (nameA: string, nameB: string): boolean => {
+            const normA = nameA.toLowerCase();
+            const normB = nameB.toLowerCase();
+
+            // 1. Check "освещение" / "осв"
+            const hasOsvA = normA.includes("освещение") || normA.includes("осв");
+            const hasOsvB = normB.includes("освещение") || normB.includes("осв");
+            if (hasOsvA !== hasOsvB) return false;
+
+            // 2. Check "отопление" / "э/отопление" / "эотопление" / "тепло" / "печ" / "обогрев"
+            const hasOtopA = normA.includes("отопление") || normA.includes("э/отопление") || normA.includes("эотопление") || normA.includes("тепло") || normA.includes("печ") || normA.includes("обогрев");
+            const hasOtopB = normB.includes("отопление") || normB.includes("э/отопление") || normB.includes("эотопление") || normB.includes("тепло") || normB.includes("печ") || normB.includes("обогрев");
+            if (hasOtopA !== hasOtopB) return false;
+
+            // 3. Check "потери"
+            const hasLossA = normA.includes("потери");
+            const hasLossB = normB.includes("потери");
+            if (hasLossA !== hasLossB) return false;
+
+            // 4. Check "пост эц" / "эц" / "пост"
+            const hasEcA = normA.includes("эц") || normA.includes("пост эц") || normA.includes("постэц");
+            const hasEcB = normB.includes("эц") || normB.includes("пост эц") || normB.includes("постэц");
+            if (hasEcA !== hasEcB) return false;
+
+            // 5. Check digits/numbers (e.g. "ТП-4" vs "ТП-5", "фидер 10" vs "фидер 11")
+            const digitsA = normA.match(/\d+/g);
+            const digitsB = normB.match(/\d+/g);
+            if (digitsA && digitsB) {
+              if (digitsA.join(',') !== digitsB.join(',')) {
+                return false;
+              }
+            }
+
+            return true;
+          };
+
+          // Helper to split a string into significant lowercase words
+          const getWords = (s: string) => {
+            return s.toLowerCase()
+              .replace(/ст\.|станция|№|точка|потребитель|поставка/gi, '')
+              .split(/[^a-zа-я0-9]+/gi)
+              .filter(w => w.length > 1);
+          };
+
+          const fileWords = getWords(cand.consumer);
+
           // --- 1. LOCAL SEARCH (inside specified stationMatch if provided) ---
           if (stationMatch) {
             // 1a. Try exact meter match inside the station
@@ -1441,15 +1488,22 @@ export default function App() {
             const exactMatchInStation = pointsList.find(p => p.stationId === stationMatch.id && p.name.toLowerCase().trim() === consumerClean);
             if (exactMatchInStation) return exactMatchInStation;
 
-            // 1c. Try fuzzy name comparison inside the station
-            const candCleaned = cleanCompareStr(cand.consumer);
-            if (candCleaned.length > 1) {
-              const matchInStation = pointsList.find(p => {
-                if (p.stationId !== stationMatch.id) return false;
-                const pCleaned = cleanCompareStr(p.name);
-                return pCleaned.length > 1 && (pCleaned.includes(candCleaned) || candCleaned.includes(pCleaned));
-              });
-              if (matchInStation) return matchInStation;
+            // 1c. Try smart word-based overlap match inside the station
+            let bestLocalSp = null;
+            let maxLocalOverlap = 0;
+            const localPoints = pointsList.filter(p => p.stationId === stationMatch.id);
+            for (const p of localPoints) {
+              if (!isCompatible(cand.consumer, p.name)) continue;
+
+              const pWords = getWords(p.name);
+              const overlap = fileWords.filter(w => pWords.includes(w)).length;
+              if (overlap > maxLocalOverlap) {
+                maxLocalOverlap = overlap;
+                bestLocalSp = p;
+              }
+            }
+            if (bestLocalSp && maxLocalOverlap >= 1) {
+              return bestLocalSp;
             }
 
             // 1d. Try fuzzy meter match inside notes or name inside the station
@@ -1476,14 +1530,21 @@ export default function App() {
           const exactMatchGlobal = pointsList.find(p => p.name.toLowerCase().trim() === consumerClean);
           if (exactMatchGlobal) return exactMatchGlobal;
 
-          // 2c. Global fuzzy name match
-          const candCleanedGlobal = cleanCompareStr(cand.consumer);
-          if (candCleanedGlobal.length > 1) {
-            const matchGlobal = pointsList.find(p => {
-              const pCleaned = cleanCompareStr(p.name);
-              return pCleaned.length > 1 && (pCleaned.includes(candCleanedGlobal) || candCleanedGlobal.includes(pCleaned));
-            });
-            if (matchGlobal) return matchGlobal;
+          // 2c. Global smart word-based overlap match
+          let bestGlobalSp = null;
+          let maxGlobalOverlap = 0;
+          for (const p of pointsList) {
+            if (!isCompatible(cand.consumer, p.name)) continue;
+
+            const pWords = getWords(p.name);
+            const overlap = fileWords.filter(w => pWords.includes(w)).length;
+            if (overlap > maxGlobalOverlap) {
+              maxGlobalOverlap = overlap;
+              bestGlobalSp = p;
+            }
+          }
+          if (bestGlobalSp && maxGlobalOverlap >= 1) {
+            return bestGlobalSp;
           }
 
           // 2d. Global fuzzy meter/note match
