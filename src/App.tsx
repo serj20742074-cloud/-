@@ -1277,8 +1277,23 @@ export default function App() {
         let originalSheetsProcessedCount = 0;
 
         // --- Custom Robust Matcher for existing points ---
+        const normalizeForComp = (s: string) => {
+          if (!s) return "";
+          let res = s.toLowerCase()
+            .replace(/[\u00A0\u1680\u180e\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          
+          // Map Latin homoglyphs to Cyrillic
+          const map: { [key: string]: string } = {
+            'a': 'а', 'c': 'с', 'e': 'е', 'o': 'о', 'p': 'р', 'x': 'х', 'y': 'у',
+            't': 'т', 'h': 'н', 'm': 'м', 'b': 'в', 'k': 'к'
+          };
+          return res.split('').map(char => map[char] || char).join('');
+        };
+
         const cleanCompareStr = (sStr: string) => {
-          return sStr.toLowerCase()
+          return normalizeForComp(sStr)
             .replace(/ст\.|станция|постэц|пост|эц|фидер|тп|№|э\/отопление|эотопление|отопление|освещение|осв/gi, '')
             .replace(/[^a-zа-я0-9]/gi, '')
             .trim();
@@ -1286,12 +1301,12 @@ export default function App() {
 
         const findMatchingStation = (nameInFile: string, stationsList: Station[]) => {
           if (!nameInFile) return null;
-          const nameLower = nameInFile.toLowerCase();
+          const nameNorm = normalizeForComp(nameInFile);
           
           // 1. Exact or contains check
           const directMatch = stationsList.find(s => {
-            const sNameLower = s.name.toLowerCase();
-            return sNameLower.includes(nameLower) || nameLower.includes(sNameLower);
+            const sNameNorm = normalizeForComp(s.name);
+            return sNameNorm.includes(nameNorm) || nameNorm.includes(sNameNorm);
           });
           if (directMatch) return directMatch;
 
@@ -1346,79 +1361,75 @@ export default function App() {
         ) => {
           if (!nameInFile) return null;
           
-          const fileStr = nameInFile.toLowerCase().trim();
+          const fileNorm = normalizeForComp(nameInFile);
 
-          // If stationMatch is provided, strictly search within this station first
-          const scopedList = stationMatch 
-            ? lossList.filter(lo => lo.stationId === stationMatch.id)
-            : lossList;
+          // Helper to find match within a specific list
+          const findInList = (list: LossObject[]) => {
+            if (list.length === 0) return null;
 
-          if (scopedList.length === 0) return null;
-
-          // 1. Direct exact/simple match
-          let match = scopedList.find(lo => {
-            const configStr = lo.name.toLowerCase().trim();
-            return configStr === fileStr;
-          });
-          if (match) return match;
-
-          // 2. Direct substring match (case insensitive)
-          // We sort the list descending by name length to ensure we match the most specific name first
-          const sortedList = [...scopedList].sort((a, b) => b.name.length - a.name.length);
-          match = sortedList.find(lo => {
-            const configStr = lo.name.toLowerCase().trim();
-            return fileStr.includes(configStr) || configStr.includes(fileStr);
-          });
-          if (match) return match;
-
-          // 3. Alphanumeric clean match (removing all spaces and symbols)
-          const cleanString = (s: string) => s.toLowerCase().replace(/[^a-zа-я0-9]/gi, '');
-          const fileClean = cleanString(nameInFile);
-          if (fileClean) {
-            match = sortedList.find(lo => {
-              const configClean = cleanString(lo.name);
-              return fileClean.includes(configClean) || configClean.includes(fileClean);
+            // 1. Direct exact/simple normalized match
+            let match = list.find(lo => {
+              const configNorm = normalizeForComp(lo.name);
+              return configNorm === fileNorm;
             });
             if (match) return match;
-          }
 
-          // 4. Overlap/Fuzzy match based on words
-          const getWords = (s: string) => s.toLowerCase().split(/[^a-zа-я0-9]+/gi).filter(w => w.length > 0);
-          const fileWords = getWords(nameInFile);
-
-          let bestMatch: LossObject | null = null;
-          let maxOverlap = 0;
-
-          for (const lo of scopedList) {
-            const configWords = getWords(lo.name);
-            const overlap = fileWords.filter(w => configWords.includes(w)).length;
-            if (overlap > maxOverlap) {
-              maxOverlap = overlap;
-              bestMatch = lo;
-            }
-          }
-
-          if (bestMatch && maxOverlap > 0) {
-            const configWords = getWords(bestMatch.name);
-            const common = fileWords.filter(w => configWords.includes(w));
-            const hasSignificantCommon = common.some(w => w !== 'потери' && w !== 'сети' && w !== 'тп' && w !== 'объект' && w !== 'станция' && w !== 'ст');
-            if (hasSignificantCommon || maxOverlap >= 2) {
-              return bestMatch;
-            }
-          }
-
-          // 5. Fallback: match by digits only (e.g. both contain "1" or "2")
-          const fileDigits = nameInFile.match(/\d+/);
-          if (fileDigits) {
-            const numStr = fileDigits[0];
+            // 2. Direct substring match (case insensitive, normalized)
+            const sortedList = [...list].sort((a, b) => b.name.length - a.name.length);
             match = sortedList.find(lo => {
-              const loDigits = lo.name.match(/\d+/);
-              return loDigits && loDigits[0] === numStr;
+              const configNorm = normalizeForComp(lo.name);
+              return fileNorm.includes(configNorm) || configNorm.includes(fileNorm);
             });
             if (match) return match;
+
+            // 3. Overlap/Fuzzy match based on words
+            const getWords = (s: string) => s.toLowerCase().split(/[^a-zа-я0-9]+/gi).filter(w => w.length > 0);
+            const fileWords = getWords(nameInFile);
+
+            let bestMatch: LossObject | null = null;
+            let maxOverlap = 0;
+
+            for (const lo of list) {
+              const configWords = getWords(lo.name);
+              const overlap = fileWords.filter(w => configWords.includes(w)).length;
+              if (overlap > maxOverlap) {
+                maxOverlap = overlap;
+                bestMatch = lo;
+              }
+            }
+
+            if (bestMatch && maxOverlap > 0) {
+              const configWords = getWords(bestMatch.name);
+              const common = fileWords.filter(w => configWords.includes(w));
+              const hasSignificantCommon = common.some(w => w !== 'потери' && w !== 'сети' && w !== 'тп' && w !== 'объект' && w !== 'станция' && w !== 'ст');
+              if (hasSignificantCommon || maxOverlap >= 2) {
+                return bestMatch;
+              }
+            }
+
+            // 4. Fallback: match by digits only (e.g. both contain "1" or "2")
+            const fileDigits = nameInFile.match(/\d+/);
+            if (fileDigits) {
+              const numStr = fileDigits[0];
+              match = sortedList.find(lo => {
+                const loDigits = lo.name.match(/\d+/);
+                return loDigits && loDigits[0] === numStr;
+              });
+              if (match) return match;
+            }
+
+            return null;
+          };
+
+          // --- Phase 1: Local station-scoped search ---
+          if (stationMatch) {
+            const scopedList = lossList.filter(lo => lo.stationId === stationMatch.id);
+            const localMatch = findInList(scopedList);
+            if (localMatch) return localMatch;
           }
 
-          return null;
+          // --- Phase 2: Global cross-station search ---
+          return findInList(lossList);
         };
 
         const findMatchingSupplyPoint = (
@@ -1426,13 +1437,13 @@ export default function App() {
           stationMatch: any,
           pointsList: any[]
         ) => {
-          const consumerClean = cand.consumer.toLowerCase().trim();
+          const consumerClean = normalizeForComp(cand.consumer);
           const meterClean = cand.meter ? cand.meter.trim() : "";
 
           // Compatibility check helper to prevent wrong category matches
           const isCompatible = (nameA: string, nameB: string): boolean => {
-            const normA = nameA.toLowerCase();
-            const normB = nameB.toLowerCase();
+            const normA = normalizeForComp(nameA);
+            const normB = normalizeForComp(nameB);
 
             // 1. Check "освещение" / "осв"
             const hasOsvA = normA.includes("освещение") || normA.includes("осв");
@@ -1450,8 +1461,8 @@ export default function App() {
             if (hasLossA !== hasLossB) return false;
 
             // 4. Check "пост эц" / "эц" / "пост"
-            const hasEcA = normA.includes("эц") || normA.includes("пост эц") || normA.includes("постэц");
-            const hasEcB = normB.includes("эц") || normB.includes("пост эц") || normB.includes("постэц");
+            const hasEcA = normA.includes("эц") || normA.includes("пост эц") || normA.includes("постэц") || normA.includes("пост");
+            const hasEcB = normB.includes("эц") || normB.includes("пост эц") || normB.includes("постэц") || normB.includes("пост");
             if (hasEcA !== hasEcB) return false;
 
             // 5. Check digits/numbers (e.g. "ТП-4" vs "ТП-5", "фидер 10" vs "фидер 11")
@@ -1485,7 +1496,7 @@ export default function App() {
             }
 
             // 1b. Try exact name match inside the station
-            const exactMatchInStation = pointsList.find(p => p.stationId === stationMatch.id && p.name.toLowerCase().trim() === consumerClean);
+            const exactMatchInStation = pointsList.find(p => p.stationId === stationMatch.id && normalizeForComp(p.name) === consumerClean);
             if (exactMatchInStation) return exactMatchInStation;
 
             // 1c. Try smart word-based overlap match inside the station
@@ -1527,7 +1538,7 @@ export default function App() {
           }
 
           // 2b. Global exact name match
-          const exactMatchGlobal = pointsList.find(p => p.name.toLowerCase().trim() === consumerClean);
+          const exactMatchGlobal = pointsList.find(p => normalizeForComp(p.name) === consumerClean);
           if (exactMatchGlobal) return exactMatchGlobal;
 
           // 2c. Global smart word-based overlap match
@@ -1651,7 +1662,21 @@ export default function App() {
                 const searchStr = rawTp.toLowerCase().includes("потери") ? rawTp : rawObj;
                 const stationMatch = findMatchingStation(rawObj, stationsState);
 
-                const matchLo = findMatchingLossObject(searchStr, stationMatch, lossObjectsState);
+                let matchLo = findMatchingLossObject(searchStr, stationMatch, lossObjectsState);
+
+                if (!matchLo) {
+                  const newLossId = `loss-orig-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+                  const defaultStationId = stationMatch?.id || (stationsState[0]?.id || undefined);
+                  const defaultSection = stationMatch?.section || (stationsState[0]?.section || "Прочие");
+                  matchLo = {
+                    id: newLossId,
+                    name: searchStr.toLowerCase().startsWith('потери') ? searchStr : `Потери - ${searchStr}`,
+                    stationId: defaultStationId,
+                    section: defaultSection,
+                    note: rawNote || "Созданы из ведомости"
+                  };
+                  lossObjectsState.push(matchLo);
+                }
 
                 if (matchLo) {
                   totalStandardImportCount++;
@@ -1965,7 +1990,19 @@ export default function App() {
 
               if (cand.isLossesRow) {
                 // PROCESS NETWORK TECHNOLOGY LOSSES
-                const lossObj = findMatchingLossObject(cand.consumer, stationMatch, lossObjectsState);
+                let lossObj = findMatchingLossObject(cand.consumer, stationMatch, lossObjectsState);
+
+                if (!lossObj) {
+                  const newLossId = `loss-rjd-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+                  lossObj = {
+                    id: newLossId,
+                    name: cand.consumer.toLowerCase().startsWith('потери') ? cand.consumer : `Потери - ${cand.consumer}`,
+                    stationId: stationMatch?.id || undefined,
+                    section: stationMatch?.section || "Прочие",
+                    note: cand.note || "Созданы из ведомости"
+                  };
+                  lossObjectsState.push(lossObj);
+                }
 
                 if (lossObj) {
                   // Apply values for detected years
