@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx';
 import {
   LayoutDashboard,
   Train,
+  Zap,
   ZapOff,
   TrendingUp,
   TrendingDown,
@@ -128,6 +129,11 @@ export default function App() {
   const [reportLossSearch, setReportLossSearch] = useState<string>('');
   const [reportSelectedLossObjectId, setReportSelectedLossObjectId] = useState<string | null>(null);
   const [reportHoveredSingleLossPoint, setReportHoveredSingleLossPoint] = useState<{ month: number; year: number; value: number } | null>(null);
+
+  // Category Analytics Specific States (Criticism Zone & Expanding)
+  const [categoryCriticismOnly, setCategoryCriticismOnly] = useState<boolean>(false);
+  const [expandedCatStations, setExpandedCatStations] = useState<Record<string, boolean>>({});
+  const [expandedCatPoints, setExpandedCatPoints] = useState<Record<string, boolean>>({});
 
   // Interactive Graph variables
   const [visibleYears, setVisibleYears] = useState<{ [key: number]: boolean }>({ 2025: true, 2026: true });
@@ -1280,6 +1286,7 @@ export default function App() {
         const normalizeForComp = (s: string) => {
           if (!s) return "";
           let res = s.toLowerCase()
+            .replace(/ё/g, 'е')
             .replace(/[\u00A0\u1680\u180e\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
@@ -1362,6 +1369,14 @@ export default function App() {
           if (!nameInFile) return null;
           
           const fileNorm = normalizeForComp(nameInFile);
+          const cleanFile = fileNorm.replace(/[^a-zа-я0-9]/gi, '');
+
+          // --- Step 1: Global Exact & Cleaned-Exact Match first! ---
+          let globalExact = lossList.find(lo => {
+            const configNorm = normalizeForComp(lo.name);
+            return configNorm === fileNorm || configNorm.replace(/[^a-zа-я0-9]/gi, '') === cleanFile;
+          });
+          if (globalExact) return globalExact;
 
           // Helper to find match within a specific list
           const findInList = (list: LossObject[]) => {
@@ -1439,6 +1454,22 @@ export default function App() {
         ) => {
           const consumerClean = normalizeForComp(cand.consumer);
           const meterClean = cand.meter ? cand.meter.trim() : "";
+          const cleanConsumerOnly = consumerClean.replace(/[^a-zа-я0-9]/gi, '');
+
+          // --- Step 1: Global Exact & Cleaned-Exact Match first! ---
+          // 1a. Global exact meter match
+          if (meterClean) {
+            const byMeterGlobal = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
+            if (byMeterGlobal) return byMeterGlobal;
+          }
+
+          // 1b. Global exact name match
+          const exactMatchGlobal = pointsList.find(p => normalizeForComp(p.name) === consumerClean);
+          if (exactMatchGlobal) return exactMatchGlobal;
+
+          // 1c. Global clean-exact name match (ignores punctuation and spaces completely)
+          const cleanExactMatchGlobal = pointsList.find(p => normalizeForComp(p.name).replace(/[^a-zа-я0-9]/gi, '') === cleanConsumerOnly);
+          if (cleanExactMatchGlobal) return cleanExactMatchGlobal;
 
           // Compatibility check helper to prevent wrong category matches
           const isCompatible = (nameA: string, nameB: string): boolean => {
@@ -1487,19 +1518,19 @@ export default function App() {
 
           const fileWords = getWords(cand.consumer);
 
-          // --- 1. LOCAL SEARCH (inside specified stationMatch if provided) ---
+          // --- 2. LOCAL SEARCH (inside specified stationMatch if provided) ---
           if (stationMatch) {
-            // 1a. Try exact meter match inside the station
+            // 2a. Try exact meter match inside the station
             if (meterClean) {
               const byMeterInStation = pointsList.find(p => p.stationId === stationMatch.id && p.meterNumber && p.meterNumber.trim() === meterClean);
               if (byMeterInStation) return byMeterInStation;
             }
 
-            // 1b. Try exact name match inside the station
+            // 2b. Try exact name match inside the station
             const exactMatchInStation = pointsList.find(p => p.stationId === stationMatch.id && normalizeForComp(p.name) === consumerClean);
             if (exactMatchInStation) return exactMatchInStation;
 
-            // 1c. Try smart word-based overlap match inside the station
+            // 2c. Try smart word-based overlap match inside the station
             let bestLocalSp = null;
             let maxLocalOverlap = 0;
             const localPoints = pointsList.filter(p => p.stationId === stationMatch.id);
@@ -1517,7 +1548,7 @@ export default function App() {
               return bestLocalSp;
             }
 
-            // 1d. Try fuzzy meter match inside notes or name inside the station
+            // 2d. Try fuzzy meter match inside notes or name inside the station
             if (meterClean) {
               const byMeterInNoteInStation = pointsList.find(p => 
                 p.stationId === stationMatch.id && 
@@ -1527,21 +1558,8 @@ export default function App() {
             }
           }
 
-          // --- 2. GLOBAL SEARCH (across all stations) ---
-          // Under no circumstances should we create a duplicate of an existing supply point.
-          // By matching it globally, we keep its original stationId unchanged.
-          
-          // 2a. Global exact meter match
-          if (meterClean) {
-            const byMeterGlobal = pointsList.find(p => p.meterNumber && p.meterNumber.trim() === meterClean);
-            if (byMeterGlobal) return byMeterGlobal;
-          }
-
-          // 2b. Global exact name match
-          const exactMatchGlobal = pointsList.find(p => normalizeForComp(p.name) === consumerClean);
-          if (exactMatchGlobal) return exactMatchGlobal;
-
-          // 2c. Global smart word-based overlap match
+          // --- 3. GLOBAL FUZZY SEARCH (across all stations as a fallback) ---
+          // 3a. Global smart word-based overlap match
           let bestGlobalSp = null;
           let maxGlobalOverlap = 0;
           for (const p of pointsList) {
@@ -1558,7 +1576,7 @@ export default function App() {
             return bestGlobalSp;
           }
 
-          // 2d. Global fuzzy meter/note match
+          // 3b. Global fuzzy meter/note match
           if (meterClean) {
             const byMeterInNoteGlobal = pointsList.find(p => 
               (p.note && p.note.includes(meterClean)) || 
@@ -1665,17 +1683,7 @@ export default function App() {
                 let matchLo = findMatchingLossObject(searchStr, stationMatch, lossObjectsState);
 
                 if (!matchLo) {
-                  const newLossId = `loss-orig-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-                  const defaultStationId = stationMatch?.id || (stationsState[0]?.id || undefined);
-                  const defaultSection = stationMatch?.section || (stationsState[0]?.section || "Прочие");
-                  matchLo = {
-                    id: newLossId,
-                    name: searchStr.toLowerCase().startsWith('потери') ? searchStr : `Потери - ${searchStr}`,
-                    stationId: defaultStationId,
-                    section: defaultSection,
-                    note: rawNote || "Созданы из ведомости"
-                  };
-                  lossObjectsState.push(matchLo);
+                  // Do not modify database or add new loss objects from Excel file
                 }
 
                 if (matchLo) {
@@ -1878,32 +1886,34 @@ export default function App() {
                 continue;
               }
 
-              // Skip garbage, math aggregates (e.g., "сумма января и февраля") and footers
+              const isLossesRow = cellConsumer.toLowerCase().includes('потери');
               const normConsumer = cellConsumer.toLowerCase();
               if (
-                normConsumer.includes('справочно') || 
-                normConsumer.includes('факт') || 
-                normConsumer.includes('план') || 
-                normConsumer === 'итого' ||
-                normConsumer.includes('итого ') ||
-                normConsumer.includes('сумма') || 
-                normConsumer.includes('всего') ||
-                normConsumer.includes('среднее') ||
-                normConsumer.includes('разница') ||
-                normConsumer.includes('январ') ||
-                normConsumer.includes('февр') ||
-                normConsumer.includes('март') ||
-                normConsumer.includes('апрел') ||
-                normConsumer.includes('май') ||
-                normConsumer.includes('июн') ||
-                normConsumer.includes('июл') ||
-                normConsumer.includes('август') ||
-                normConsumer.includes('сент') ||
-                normConsumer.includes('окт') ||
-                normConsumer.includes('нояб') ||
-                normConsumer.includes('декаб') ||
-                normConsumer.includes('квт') ||
-                normConsumer.includes('расход')
+                !isLossesRow && (
+                  normConsumer.includes('справочно') || 
+                  normConsumer.includes('факт') || 
+                  normConsumer.includes('план') || 
+                  normConsumer === 'итого' ||
+                  normConsumer.includes('итого ') ||
+                  normConsumer.includes('сумма') || 
+                  normConsumer.includes('всего') ||
+                  normConsumer.includes('среднее') ||
+                  normConsumer.includes('разница') ||
+                  normConsumer.includes('январ') ||
+                  normConsumer.includes('февр') ||
+                  normConsumer.includes('март') ||
+                  normConsumer.includes('апрел') ||
+                  normConsumer.includes('май') ||
+                  normConsumer.includes('июн') ||
+                  normConsumer.includes('июл') ||
+                  normConsumer.includes('август') ||
+                  normConsumer.includes('сент') ||
+                  normConsumer.includes('окт') ||
+                  normConsumer.includes('нояб') ||
+                  normConsumer.includes('декаб') ||
+                  normConsumer.includes('квт') ||
+                  normConsumer.includes('расход')
+                )
               ) {
                 continue;
               }
@@ -1919,8 +1929,6 @@ export default function App() {
               } else if (colNoteIdx !== -1 && row[colNoteIdx] !== undefined && row[colNoteIdx] !== null) {
                 cellNote = String(row[colNoteIdx]).trim();
               }
-
-              const isLossesRow = cellConsumer.toLowerCase().includes('потери');
 
               accumulatedBlock.push({
                 meter: cellMeter,
@@ -1993,15 +2001,7 @@ export default function App() {
                 let lossObj = findMatchingLossObject(cand.consumer, stationMatch, lossObjectsState);
 
                 if (!lossObj) {
-                  const newLossId = `loss-rjd-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-                  lossObj = {
-                    id: newLossId,
-                    name: cand.consumer.toLowerCase().startsWith('потери') ? cand.consumer : `Потери - ${cand.consumer}`,
-                    stationId: stationMatch?.id || undefined,
-                    section: stationMatch?.section || "Прочие",
-                    note: cand.note || "Созданы из ведомости"
-                  };
-                  lossObjectsState.push(lossObj);
+                  // Do not modify database or add new loss objects from Excel file
                 }
 
                 if (lossObj) {
@@ -4228,6 +4228,70 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Зона критики и Экспандеры */}
+                        <div className={`flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-xl border ${categoryCriticismOnly ? (darkTheme ? 'bg-rose-950/20 border-rose-900/60' : 'bg-rose-50 border-rose-200') : (darkTheme ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200')} shadow-sm`}>
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-lg shrink-0 ${categoryCriticismOnly ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-500/10 text-slate-400'}`}>
+                              <AlertTriangle className={`w-4 h-4 ${categoryCriticismOnly ? 'animate-bounce text-rose-500' : ''}`} />
+                            </div>
+                            <div>
+                              <h5 className={`text-xs font-bold uppercase tracking-wider ${categoryCriticismOnly ? 'text-rose-400' : 'text-slate-300'}`}>
+                                Фильтрация по критическим превышениям (Зона критики)
+                              </h5>
+                              <p className="text-[9px] text-slate-500">
+                                {categoryCriticismOnly 
+                                  ? 'Показаны только станции и точки с ростом расхода (перерасходом) г/г. Нажмите на станцию, чтобы раскрыть её.' 
+                                  : 'Отображение всех узлов. Переключите, чтобы сфокусироваться только на узлах с перерасходом.'}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            {/* Кнопка сброса раскрытия */}
+                            {(Object.keys(expandedCatStations).length > 0 || Object.keys(expandedCatPoints).length > 0) && (
+                              <button
+                                onClick={() => {
+                                  setExpandedCatStations({});
+                                  setExpandedCatPoints({});
+                                }}
+                                className={`px-2.5 py-1.5 text-[10px] font-bold rounded-lg border transition-all ${
+                                  darkTheme 
+                                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700' 
+                                    : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                Свернуть все ТП/станции
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => {
+                                setCategoryCriticismOnly(!categoryCriticismOnly);
+                                if (!categoryCriticismOnly) {
+                                  // Expand all stations with dynamic growth to make them visible immediately
+                                  const overspendingStations: Record<string, boolean> = {};
+                                  stationCalculations.forEach(sc => {
+                                    if (sc.diff > 0) {
+                                      overspendingStations[sc.station.id] = true;
+                                    }
+                                  });
+                                  setExpandedCatStations(overspendingStations);
+                                }
+                              }}
+                              className={`px-4 py-2 text-xs font-extrabold rounded-lg border transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                                categoryCriticismOnly
+                                  ? 'bg-rose-600 hover:bg-rose-700 border-rose-500 text-white'
+                                  : darkTheme
+                                    ? 'bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-300'
+                                    : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'
+                              }`}
+                            >
+                              <Zap className="w-3.5 h-3.5" />
+                              <span>{categoryCriticismOnly ? '🔴 Зона критики: ВКЛ' : '🔘 Зона критики: ВЫКЛ'}</span>
+                            </button>
+                          </div>
+                        </div>
+
                         {/* Split layouts: Stations comparison left, individual supply points right */}
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
@@ -4253,7 +4317,194 @@ export default function App() {
                             </div>
 
                             <div className="space-y-4">
-                              {[...stationCalculations].sort((a, b) => {
+                              {(() => {
+                                const renderMonthlyDetailTable = (pointId: string) => {
+                                  return (
+                                    <div className={`mt-2.5 p-3 rounded-lg border text-[11px] ${darkTheme ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-100/80 border-slate-200'} animate-slideDown overflow-x-auto`}>
+                                      <div className="font-extrabold uppercase text-[9px] text-slate-500 mb-2 tracking-wider flex items-center justify-between">
+                                        <span>Помесячный расход (кВт·ч):</span>
+                                        <span className="text-slate-400 font-mono text-[8px] normal-case">Период: {selectedPeriodName}</span>
+                                      </div>
+                                      <table className="w-full border-collapse text-[10px]">
+                                        <thead>
+                                          <tr className="border-b border-slate-800/40 text-[9px] font-bold text-slate-500">
+                                            <th className="text-left pb-1 font-semibold">Месяц</th>
+                                            <th className="text-right pb-1 font-semibold">2025 г.</th>
+                                            <th className="text-right pb-1 font-semibold">2026 г.</th>
+                                            <th className="text-right pb-1 font-semibold">Разница</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-800/20">
+                                          {Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
+                                            const isActiveMonth = selectedMonthsList.includes(m);
+                                            const mValCurr = readings.find(r => r.year === selectedYear && r.month === m && r.supplyPointId === pointId)?.value || 0;
+                                            const mValPrev = readings.find(r => r.year === selectedYear - 1 && r.month === m && r.supplyPointId === pointId)?.value || 0;
+                                            const mDiff = mValCurr - mValPrev;
+                                            const mSaving = mDiff < 0;
+
+                                            if (mValCurr === 0 && mValPrev === 0) return null;
+
+                                            return (
+                                              <tr 
+                                                key={m} 
+                                                className={`transition-colors ${
+                                                  isActiveMonth 
+                                                    ? (darkTheme ? 'bg-blue-500/10 text-blue-200 font-semibold' : 'bg-blue-100/50 text-blue-900 font-semibold') 
+                                                    : 'text-slate-400'
+                                                }`}
+                                              >
+                                                <td className="py-1 flex items-center gap-1">
+                                                  {isActiveMonth && <span className="inline-block w-1 h-1 rounded-full bg-blue-500"></span>}
+                                                  <span>{RUSSIAN_MONTHS[m - 1]}</span>
+                                                </td>
+                                                <td className="py-1 text-right font-mono">{mValPrev.toLocaleString()}</td>
+                                                <td className={`py-1 text-right font-mono ${isActiveMonth ? (mSaving ? 'text-emerald-400' : mDiff > 0 ? 'text-rose-450' : '') : ''}`}>
+                                                  {mValCurr.toLocaleString()}
+                                                </td>
+                                                <td className={`py-1 text-right font-mono font-bold ${
+                                                  mDiff > 0 ? 'text-rose-500' : mDiff < 0 ? 'text-emerald-500' : 'text-slate-500'
+                                                }`}>
+                                                  {mDiff > 0 ? `+${mDiff.toLocaleString()}` : mDiff.toLocaleString()}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  );
+                                };
+
+                                const filteredStationsCalculations = categoryCriticismOnly
+                                  ? stationCalculations.filter(sc => sc.diff > 0)
+                                  : stationCalculations;
+
+                                if (filteredStationsCalculations.length === 0) {
+                                  return (
+                                    <div className="text-center py-8 text-slate-500 text-xs">Нет станций с повышенным расходом в выбранном режиме</div>
+                                  );
+                                }
+
+                                return [...filteredStationsCalculations].sort((a, b) => {
+                                  if (categoryStationSortOrder === 'worst-first') return b.diff - a.diff;
+                                  if (categoryStationSortOrder === 'best-first') return a.diff - b.diff;
+                                  if (categoryStationSortOrder === 'volume-desc') return b.curr - a.curr;
+                                  if (categoryStationSortOrder === 'volume-asc') return a.curr - b.curr;
+                                  return 0;
+                                }).map(sc => {
+                                  const isSaving = sc.diff < 0;
+                                  const isExpanded = !!expandedCatStations[sc.station.id];
+                                  
+                                  const stationPoints = catPoints.filter(p => p.stationId === sc.station.id);
+                                  const filteredStationPoints = categoryCriticismOnly
+                                    ? stationPoints.filter(p => {
+                                        const currPt = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                        const prevPt = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                        return (currPt - prevPt) > 0;
+                                      })
+                                    : stationPoints;
+
+                                  return (
+                                    <div 
+                                      key={sc.station.id} 
+                                      className={`p-3 rounded-xl border transition-all duration-150 ${
+                                        isExpanded 
+                                          ? (darkTheme ? 'bg-slate-800/60 border-slate-650 shadow-md' : 'bg-slate-50 border-slate-300 shadow-md')
+                                          : (darkTheme ? 'bg-slate-800/20 border-slate-800 hover:bg-slate-800/35 hover:border-slate-700/60' : 'bg-white border-slate-100 hover:bg-slate-55 hover:border-slate-200')
+                                      }`}
+                                    >
+                                      <div 
+                                        className="flex items-center justify-between cursor-pointer"
+                                        onClick={() => setExpandedCatStations(prev => ({ ...prev, [sc.station.id]: !prev[sc.station.id] }))}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className={`transition-transform duration-150 ${isExpanded ? 'rotate-90 text-blue-500' : 'text-slate-500'}`}>
+                                            <ChevronRight className="w-3.5 h-3.5" />
+                                          </span>
+                                          <span className="font-bold text-xs">{sc.station.name}</span>
+                                        </div>
+                                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                          isSaving 
+                                            ? (darkTheme ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border border-emerald-100') 
+                                            : (darkTheme ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-rose-50 text-rose-600 border border-rose-100')
+                                        }`}>
+                                          {isSaving ? <TrendingDown className="w-3 h-3 text-emerald-400" /> : <TrendingUp className="w-3 h-3 text-rose-400" />}
+                                          <span>
+                                            {sc.diff > 0 ? `+${sc.diff.toLocaleString()}` : sc.diff.toLocaleString()} кВт·ч ({sc.pct > 0 ? `+${sc.pct.toFixed(1)}%` : `${sc.pct.toFixed(1)}%`})
+                                          </span>
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono mt-1.5 pl-5">
+                                        <span>ТП в категории: <span className="font-bold text-slate-400">{filteredStationPoints.length} / {sc.pointsCount}</span></span>
+                                        <div className="flex gap-2">
+                                          <span>25г: <span className="font-bold">{sc.prev.toLocaleString()}</span></span>
+                                          <span>26г: <span className={`font-bold ${isSaving ? "text-emerald-400" : "text-rose-400"}`}>{sc.curr.toLocaleString()}</span></span>
+                                        </div>
+                                      </div>
+
+                                      {isExpanded && (
+                                        <div className="mt-3 pt-3 border-t border-slate-700/30 space-y-2 animate-fadeIn pl-1">
+                                          <div className="text-[9px] font-extrabold uppercase tracking-widest text-slate-450 mb-1.5">
+                                            {categoryCriticismOnly ? '⚠️ ТП в зоне критики (перерасход):' : '🔌 Подключенные точки поставки:'}
+                                          </div>
+                                          {filteredStationPoints.length === 0 ? (
+                                            <div className="text-center py-2 text-slate-500 text-[10px]">Нет точек в выбранном режиме</div>
+                                          ) : (
+                                            filteredStationPoints.map(p => {
+                                              const currPt = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                              const prevPt = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((sum, r) => sum + r.value, 0);
+                                              const diffPt = currPt - prevPt;
+                                              const pctPt = prevPt > 0 ? (diffPt / prevPt) * 100 : 0;
+                                              const isPtExpanded = !!expandedCatPoints[p.id];
+
+                                              return (
+                                                <div 
+                                                  key={p.id} 
+                                                  className={`p-2 rounded-lg border text-[11px] transition-all ${
+                                                    isPtExpanded
+                                                      ? (darkTheme ? 'bg-slate-900 border-amber-500/45 shadow' : 'bg-slate-100 border-amber-600/30 shadow')
+                                                      : (darkTheme ? 'bg-slate-900/40 border-slate-800 hover:bg-slate-900/70' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/80')
+                                                  }`}
+                                                >
+                                                  <div 
+                                                    className="flex items-center justify-between cursor-pointer"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setExpandedCatPoints(prev => ({ ...prev, [p.id]: !prev[p.id] }));
+                                                    }}
+                                                  >
+                                                    <div className="flex items-center gap-1.5 truncate max-w-[150px]">
+                                                      <span className={`transition-transform duration-150 ${isPtExpanded ? 'rotate-90 text-amber-500' : 'text-slate-500'}`}>
+                                                        <ChevronRight className="w-3 h-3" />
+                                                      </span>
+                                                      <span className="font-bold truncate" title={p.name}>{p.name}</span>
+                                                    </div>
+                                                    <span className={`font-mono font-bold text-[10px] ${
+                                                      diffPt > 0 ? 'text-rose-450' : diffPt < 0 ? 'text-emerald-400' : 'text-slate-400'
+                                                    }`}>
+                                                      {diffPt > 0 ? `+${diffPt.toLocaleString()}` : diffPt.toLocaleString()} кВт·ч ({pctPt > 0 ? `+${pctPt.toFixed(0)}%` : `${pctPt.toFixed(0)}%`})
+                                                    </span>
+                                                  </div>
+
+                                                  <div className="flex items-center justify-between text-[8px] text-slate-500 mt-1 pl-4">
+                                                    <span className="uppercase font-semibold text-slate-400">{p.calculationMethod === 'estimated' ? 'Расчетный' : 'Прибор учета'}</span>
+                                                    <span>25г: {prevPt.toLocaleString()} | 26г: {currPt.toLocaleString()}</span>
+                                                  </div>
+
+                                                  {isPtExpanded && renderMonthlyDetailTable(p.id)}
+                                                </div>
+                                              );
+                                            })
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                });
+                              })()}
+
+                              {false && [...stationCalculations].sort((a, b) => {
                                 if (categoryStationSortOrder === 'worst-first') return b.diff - a.diff;
                                 if (categoryStationSortOrder === 'best-first') return a.diff - b.diff;
                                 if (categoryStationSortOrder === 'volume-desc') return b.curr - a.curr;
@@ -4316,10 +4567,64 @@ export default function App() {
                              </div>
 
                              <div className="overflow-y-auto max-h-[400px] space-y-3 pr-1">
-                               {pointCalculations.length === 0 ? (
-                                 <div className="text-center py-8 text-slate-500 text-xs">Нет активных точек в выбранной категории</div>
-                               ) : (
-                                 [...pointCalculations].sort((a, b) => {
+                               {(() => {
+                                 const filteredPoints = categoryCriticismOnly
+                                   ? pointCalculations.filter(pc => pc.diff > 0)
+                                   : pointCalculations;
+
+                                 if (filteredPoints.length === 0) {
+                                   return (
+                                     <div className="text-center py-8 text-slate-500 text-xs">Нет точек в выбранном режиме</div>
+                                   );
+                                 }
+
+                                 const renderMonthlyDetailTableRight = (pointId: string) => {
+                                   return (
+                                     <div className={`mt-2 p-3 rounded-lg border text-[10px] ${darkTheme ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-100/80 border-slate-200'} overflow-x-auto`}>
+                                       <div className="font-extrabold uppercase text-[8px] text-slate-500 mb-2 tracking-wider flex items-center justify-between">
+                                         <span>Помесячный расход (кВт·ч):</span>
+                                       </div>
+                                       <table className="w-full border-collapse">
+                                         <thead>
+                                           <tr className="border-b border-slate-800/40 text-[8px] font-bold text-slate-500">
+                                             <th className="text-left pb-1">Месяц</th>
+                                             <th className="text-right pb-1">2025 г.</th>
+                                             <th className="text-right pb-1">2026 г.</th>
+                                             <th className="text-right pb-1">Разница</th>
+                                           </tr>
+                                         </thead>
+                                         <tbody className="divide-y divide-slate-800/20">
+                                           {Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
+                                             const isActiveMonth = selectedMonthsList.includes(m);
+                                             const mValCurr = readings.find(r => r.year === selectedYear && r.month === m && r.supplyPointId === pointId)?.value || 0;
+                                             const mValPrev = readings.find(r => r.year === selectedYear - 1 && r.month === m && r.supplyPointId === pointId)?.value || 0;
+                                             const mDiff = mValCurr - mValPrev;
+                                             const mSaving = mDiff < 0;
+
+                                             if (mValCurr === 0 && mValPrev === 0) return null;
+
+                                             return (
+                                               <tr key={m} className={isActiveMonth ? (darkTheme ? 'bg-blue-500/10 font-semibold text-blue-300' : 'bg-blue-100/50 font-semibold text-blue-900') : 'text-slate-400'}>
+                                                 <td className="py-1">{RUSSIAN_MONTHS[m - 1]}</td>
+                                                 <td className="py-1 text-right font-mono">{mValPrev.toLocaleString()}</td>
+                                                 <td className={`py-1 text-right font-mono ${isActiveMonth ? (mSaving ? 'text-emerald-400' : mDiff > 0 ? 'text-rose-450' : '') : ''}`}>
+                                                   {mValCurr.toLocaleString()}
+                                                 </td>
+                                                 <td className={`py-1 text-right font-mono font-bold ${
+                                                   mDiff > 0 ? 'text-rose-500' : mDiff < 0 ? 'text-emerald-500' : 'text-slate-500'
+                                                 }`}>
+                                                   {mDiff > 0 ? `+${mDiff.toLocaleString()}` : mDiff.toLocaleString()}
+                                                 </td>
+                                               </tr>
+                                             );
+                                           })}
+                                         </tbody>
+                                       </table>
+                                     </div>
+                                   );
+                                 };
+
+                                 return [...filteredPoints].sort((a, b) => {
                                    if (categoryPointSortOrder === 'worst-first') return b.diff - a.diff;
                                    if (categoryPointSortOrder === 'best-first') return a.diff - b.diff;
                                    if (categoryPointSortOrder === 'volume-desc') return b.curr - a.curr;
@@ -4327,6 +4632,76 @@ export default function App() {
                                    return 0;
                                  }).map(pc => {
                                    const isSaving = pc.diff < 0;
+                                   const isPtExpanded = !!expandedCatPoints[pc.point.id];
+
+                                   return (
+                                      <div 
+                                        key={pc.point.id} 
+                                        className={`p-3 rounded-lg border flex flex-col gap-2 transition-all cursor-pointer ${
+                                          isPtExpanded
+                                            ? (darkTheme ? 'bg-slate-900 border-amber-500/40 shadow-md' : 'bg-slate-100/80 border-amber-500/30 shadow-md')
+                                            : (darkTheme ? 'bg-slate-900/40 border-slate-800/60 hover:bg-slate-900/70' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/60')
+                                        }`}
+                                        onClick={() => setExpandedCatPoints(prev => ({ ...prev, [pc.point.id]: !prev[pc.point.id] }))}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div>
+                                            <div className="text-xs font-bold flex items-center gap-1.5">
+                                              <span className={`transition-transform duration-150 ${isPtExpanded ? 'rotate-90 text-amber-500' : 'text-slate-500'}`}>
+                                                <ChevronRight className="w-3.5 h-3.5" />
+                                              </span>
+                                              <span className={`w-1.5 h-1.5 rounded-full ${pc.point.isActive ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
+                                              {pc.point.name}
+                                            </div>
+                                            <div className="text-[9px] text-slate-500 font-semibold uppercase mt-0.5 pl-4">
+                                              {pc.stationName}
+                                            </div>
+                                          </div>
+                                          <span className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
+                                            pc.point.calculationMethod === 'estimated' 
+                                              ? 'bg-amber-500/10 text-amber-500' 
+                                              : 'bg-blue-500/10 text-blue-400'
+                                          }`}>
+                                            {pc.point.calculationMethod === 'estimated' ? 'Расчетный' : 'Прибор учета'}
+                                          </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-2 border-t border-slate-700/20 pt-2 text-[10px] font-mono pl-4">
+                                          <div>
+                                            <span className="block text-[8px] text-slate-500 font-semibold uppercase">2025 г.</span>
+                                            <span className="font-bold">{pc.prev.toLocaleString()} кВт·ч</span>
+                                          </div>
+                                          <div>
+                                            <span className="block text-[8px] text-slate-500 font-semibold uppercase">2026 г.</span>
+                                            <span className={`font-bold ${isSaving ? 'text-emerald-400' : 'text-rose-400'}`}>{pc.curr.toLocaleString()} кВт·ч</span>
+                                          </div>
+                                          <div>
+                                            <span className="block text-[8px] text-slate-500 font-semibold uppercase">Динамика</span>
+                                            <span className={`font-bold flex items-center ${isSaving ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                              {isSaving ? <TrendingDown className="w-3 h-3 mr-0.5" /> : <TrendingUp className="w-3 h-3 mr-0.5" />}
+                                              {pc.diff > 0 ? `+${pc.diff.toLocaleString()}` : pc.diff.toLocaleString()} ({pc.pct > 0 ? `+${pc.pct.toFixed(0)}%` : `${pc.pct.toFixed(0)}%`})
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {isPtExpanded && (
+                                          <div onClick={(e) => e.stopPropagation()}>
+                                            {renderMonthlyDetailTableRight(pc.point.id)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  });
+                               })()}
+
+                               {false && [...pointCalculations].sort((a, b) => {
+                                 if (categoryPointSortOrder === 'worst-first') return b.diff - a.diff;
+                                 if (categoryPointSortOrder === 'best-first') return a.diff - b.diff;
+                                 if (categoryPointSortOrder === 'volume-desc') return b.curr - a.curr;
+                                 if (categoryPointSortOrder === 'volume-asc') return a.curr - b.curr;
+                                 return 0;
+                               }).map(pc => {
+                                 const isSaving = pc.diff < 0;
                                    return (
                                      <div key={pc.point.id} className={`p-3 rounded-lg border flex flex-col gap-2 ${darkTheme ? 'bg-slate-900/40 border-slate-800/60' : 'bg-slate-50 border-slate-200'}`}>
                                        <div className="flex items-start justify-between gap-3">
@@ -4368,7 +4743,7 @@ export default function App() {
                                      </div>
                                    );
                                  })
-                               )}
+                               }
                              </div>
                            </div>
                          </div>
