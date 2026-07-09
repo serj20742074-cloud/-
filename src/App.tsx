@@ -31,7 +31,8 @@ import {
   ChevronRight,
   RefreshCw,
   Activity,
-  Calendar
+  Calendar,
+  ExternalLink
 } from 'lucide-react';
 
 import {
@@ -4422,6 +4423,18 @@ export default function App() {
                                             <ChevronRight className="w-3.5 h-3.5" />
                                           </span>
                                           <span className="font-bold text-xs">{sc.station.name}</span>
+                                          <button
+                                            title="Открыть карточку станции"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedStationId(sc.station.id);
+                                              setSelectedSupplyPointId(null);
+                                              setActiveTab('stations');
+                                            }}
+                                            className="p-1 rounded text-blue-400 hover:bg-blue-500/10 transition-colors"
+                                          >
+                                            <ExternalLink className="w-3.5 h-3.5" />
+                                          </button>
                                         </div>
                                         <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
                                           isSaving 
@@ -4479,6 +4492,18 @@ export default function App() {
                                                         <ChevronRight className="w-3 h-3" />
                                                       </span>
                                                       <span className="font-bold truncate" title={p.name}>{p.name}</span>
+                                                      <button
+                                                        title="Открыть карточку ТП"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setSelectedStationId(p.stationId);
+                                                          setSelectedSupplyPointId(p.id);
+                                                          setActiveTab('stations');
+                                                        }}
+                                                        className="p-1 rounded text-amber-400 hover:bg-amber-500/10 transition-colors shrink-0"
+                                                      >
+                                                        <ExternalLink className="w-3 h-3" />
+                                                      </button>
                                                     </div>
                                                     <span className={`font-mono font-bold text-[10px] ${
                                                       diffPt > 0 ? 'text-rose-450' : diffPt < 0 ? 'text-emerald-400' : 'text-slate-400'
@@ -4651,10 +4676,34 @@ export default function App() {
                                                 <ChevronRight className="w-3.5 h-3.5" />
                                               </span>
                                               <span className={`w-1.5 h-1.5 rounded-full ${pc.point.isActive ? 'bg-emerald-500' : 'bg-slate-500'}`}></span>
-                                              {pc.point.name}
+                                              <span>{pc.point.name}</span>
+                                              <button
+                                                title="Открыть карточку ТП"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setSelectedStationId(pc.point.stationId);
+                                                  setSelectedSupplyPointId(pc.point.id);
+                                                  setActiveTab('stations');
+                                                }}
+                                                className="p-1 rounded text-amber-400 hover:bg-amber-500/10 transition-colors shrink-0"
+                                              >
+                                                <ExternalLink className="w-3.5 h-3.5" />
+                                              </button>
                                             </div>
-                                            <div className="text-[9px] text-slate-500 font-semibold uppercase mt-0.5 pl-4">
-                                              {pc.stationName}
+                                            <div className="text-[9px] text-slate-500 font-semibold uppercase mt-0.5 pl-4 flex items-center gap-1">
+                                              <span>{pc.stationName}</span>
+                                              <button
+                                                title="Открыть карточку станции"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setSelectedStationId(pc.point.stationId);
+                                                  setSelectedSupplyPointId(null);
+                                                  setActiveTab('stations');
+                                                }}
+                                                className="p-0.5 rounded text-blue-400 hover:bg-blue-500/10 transition-colors"
+                                              >
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </button>
                                             </div>
                                           </div>
                                           <span className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
