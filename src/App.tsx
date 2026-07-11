@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import pptxgen from 'pptxgenjs';
 import {
   LayoutDashboard,
   Train,
@@ -32,7 +33,8 @@ import {
   RefreshCw,
   Activity,
   Calendar,
-  ExternalLink
+  ExternalLink,
+  Presentation
 } from 'lucide-react';
 
 import {
@@ -119,7 +121,7 @@ export default function App() {
   const [selectedSupplyPointId, setSelectedSupplyPointId] = useState<string | null>(null);
   const [selectedReportStationId, setSelectedReportStationId] = useState<string | null>(null);
   const [selectedReportSupplyPointId, setSelectedReportSupplyPointId] = useState<string | null>(null);
-  const [reportSubTab, setReportSubTab] = useState<'stations' | 'categories' | 'accounting_methods' | 'losses'>('stations');
+  const [reportSubTab, setReportSubTab] = useState<'stations' | 'categories' | 'accounting_methods' | 'losses' | 'slides_presentation'>('stations');
   const [reportCalculationMethodFilter, setReportCalculationMethodFilter] = useState<'all' | 'meter' | 'estimated'>('all');
   const [selectedReportCategoryId, setSelectedReportCategoryId] = useState<string | null>(null);
   const [categoryCalculationMethodFilter, setCategoryCalculationMethodFilter] = useState<'all' | 'meter' | 'estimated'>('all');
@@ -146,7 +148,7 @@ export default function App() {
 
   // Modals / Creators state
   const [stationModal, setStationModal] = useState<{ isOpen: boolean; mode: 'add' | 'edit'; id?: string; name: string; section: string; note: string } | null>(null);
-  const [pointModal, setPointModal] = useState<{ isOpen: boolean; mode: 'add' | 'edit'; id?: string; name: string; stationId: string; category: string; note: string; isActive: boolean; calculationMethod?: 'meter' | 'estimated' } | null>(null);
+  const [pointModal, setPointModal] = useState<{ isOpen: boolean; mode: 'add' | 'edit'; id?: string; name: string; stationId: string; category: string; note: string; isActive: boolean; calculationMethod?: 'meter' | 'estimated'; currKwh?: number; prevKwh?: number } | null>(null);
   const [lossModal, setLossModal] = useState<{ isOpen: boolean; mode: 'add' | 'edit'; id?: string; name: string; stationId: string; section: string; note: string } | null>(null);
   const [categoryInput, setCategoryInput] = useState<string>('');
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
@@ -169,9 +171,12 @@ export default function App() {
 
   // States for the anomalies list modal and its filters
   const [anomaliesModalOpen, setAnomaliesModalOpen] = useState<boolean>(false);
+  const [navigatedFromAnomalies, setNavigatedFromAnomalies] = useState<boolean>(false);
+  const [selectedAnomalyId, setSelectedAnomalyId] = useState<string | null>(null);
   const [anomalySearchQuery, setAnomalySearchQuery] = useState<string>('');
   const [anomalySeverityFilter, setAnomalySeverityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<'all' | 'station' | 'supply_point' | 'loss'>('all');
+  const [selectedAnomalyForDynamics, setSelectedAnomalyForDynamics] = useState<Anomaly | null>(null);
 
   // Backups state configuration
   interface BackupItem {
@@ -529,28 +534,34 @@ export default function App() {
     const totalDiff = totalCurrent - totalPrev;
     const totalPct = totalPrev > 0 ? (totalDiff / totalPrev) * 100 : 0;
 
-    // Generate table rows for individual stations
-    const stationsRows = stations.map(st => {
+    // Calculate details and rankings for stations
+    const stationDiffs = stations.map(st => {
       const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
       const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
       const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
       const diff = curr - prev;
       const pct = prev > 0 ? (diff / prev) * 100 : 0;
-      const isSaving = diff < 0;
-      const isOverrun = diff > 0;
-      const className = isOverrun ? "overrun" : isSaving ? "saving" : "neutral";
-      const diffText = diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString();
-      const pctText = prev > 0 ? (diff > 0 ? `+${pct.toFixed(2)}%` : `${pct.toFixed(2)}%`) : (curr > 0 ? "+100%" : "0.00%");
-
       return {
+        id: st.id,
         name: st.name,
-        curr: curr.toLocaleString(),
-        prev: prev.toLocaleString(),
-        diff: diffText,
-        pct: pctText,
-        className
+        curr,
+        prev,
+        diff,
+        pct
       };
     });
+
+    // worst stations (overruns): diff > 0, sorted worst to best (largest overrun to smallest overrun)
+    const worstStations = stationDiffs
+      .filter(s => s.diff > 0)
+      .sort((a, b) => b.diff - a.diff)
+      .slice(0, 5);
+
+    // best stations (savings): diff < 0, sorted best to worst (largest savings to smallest savings)
+    const bestStations = stationDiffs
+      .filter(s => s.diff < 0)
+      .sort((a, b) => a.diff - b.diff)
+      .slice(0, 5);
 
     // Deep categoric audit focusing on important categories
     const targetCategories = ["Освещение горловин", "Бытовые нагрузки", "Отопление"];
@@ -587,6 +598,12 @@ export default function App() {
         details: pointsData
       };
     });
+
+    // Losses Analysis Calculations
+    const totalLossCurrent = lossReadings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+    const totalLossPrev = lossReadings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+    const totalLossDiff = totalLossCurrent - totalLossPrev;
+    const totalLossPct = totalLossPrev > 0 ? (totalLossDiff / totalLossPrev) * 100 : 0;
 
     // Generate comprehensive HTML that Word perfectly understands
     const htmlDocContent = `
@@ -728,11 +745,13 @@ export default function App() {
             <strong>${totalDiff > 0 ? `+${totalDiff.toLocaleString()}` : totalDiff.toLocaleString()} кВт·ч</strong> 
             (${totalPrev > 0 ? (totalDiff > 0 ? `+${totalPct.toFixed(2)}` : totalPct.toFixed(2)) : "0.00"}%)
           </span>.<br/>
-          Энергетический баланс периода оценивается как: <strong>${totalDiff > 0 ? "ОТРИЦАТЕЛЬНЫЙ (ЗАФИКСИРОВАН ПЕРЕРАСХОД)" : "ПОЛОЖИТЕЛЬНЫЙ (ДОСТИГНУТА СИСТЕМНАЯ ЭКОНОМИЯ)"}</strong>.
+          Энергетический баланс периода оценивается как: <strong>${totalDiff > 0 ? "ОТРИЦАТЕЛЬНЫЙ (ЗАФИКСИРОВАН СИСТЕМНЫЙ ПЕРЕРАСХОД)" : "ПОЛОЖИТЕЛЬНЫЙ (ДОСТИГНУТА СИСТЕМНАЯ ЭКОНОМИЯ)"}</strong>.
         </div>
 
-        <h2>РАЗДЕЛ 1. ЭНЕРГЕТИЧЕСКАЯ ВЕДОМОСТЬ ПО СТАНЦИЯМ УЧАСТКА</h2>
-        <p>Ниже представлена сводная ведомость расходов электрической энергии в разрезе железнодорожных станций участка с указанием годовой динамики сравнения аналогичных расчетных периодов:</p>
+        <h2>РАЗДЕЛ 1. РЕЙТИНГ ЭНЕРГОЭФФЕКТИВНОСТИ ЖЕЛЕЗНОДОРОЖНЫХ СТАНЦИЙ</h2>
+        
+        <h3>1.1. Станции с наибольшим перерасходом электроэнергии (Лидеры роста расхода, не более 5 объектов)</h3>
+        <p>Ниже представлены железнодорожные станции, допустившие превышение расходов электроэнергии относительно аналогичного периода прошлого года, отсортированные от худших к лучшим (в порядке уменьшения абсолютного перерасхода):</p>
 
         <table>
           <thead>
@@ -740,31 +759,54 @@ export default function App() {
               <th>Железнодорожная станция</th>
               <th class="text-right">Текущее потребление (кВт·ч)</th>
               <th class="text-right">Прошлый год (кВт·ч)</th>
-              <th class="text-right">Абсолютное отклонение (кВт·ч)</th>
-              <th class="text-right">Относительное отклонение (%)</th>
+              <th class="text-right">Перерасход (кВт·ч)</th>
+              <th class="text-right">Отклонение (%)</th>
             </tr>
           </thead>
           <tbody>
-            ${stationsRows.map(row => `
+            ${worstStations.length === 0 ? `
+              <tr>
+                <td colspan="5" style="text-align: center; color: #047857; font-weight: bold; padding: 12px;">Станций с перерасходом электроэнергии не зафиксировано. Все подразделения находятся в зоне экономии.</td>
+              </tr>
+            ` : worstStations.map(row => `
               <tr>
                 <td><strong>${row.name}</strong></td>
-                <td class="text-right font-mono">${row.curr}</td>
-                <td class="text-right font-mono" style="color: #4a5568;">${row.prev}</td>
-                <td class="text-right font-mono ${row.className}">${row.diff}</td>
-                <td class="text-right font-mono ${row.className}">${row.pct}</td>
+                <td class="text-right font-mono">${row.curr.toLocaleString()}</td>
+                <td class="text-right font-mono" style="color: #4a5568;">${row.prev.toLocaleString()}</td>
+                <td class="text-right font-mono overrun">+${row.diff.toLocaleString()}</td>
+                <td class="text-right font-mono overrun">+${row.pct.toFixed(2)}%</td>
               </tr>
             `).join("")}
-            <tr style="background-color: #edf2f7; font-weight: bold; border-top: 2px solid #1a365d;">
-              <td>Итого по участку дороги:</td>
-              <td class="text-right font-mono">${totalCurrent.toLocaleString()}</td>
-              <td class="text-right font-mono">${totalPrev.toLocaleString()}</td>
-              <td class="text-right font-mono ${totalDiff > 0 ? "overrun" : "saving"}">
-                ${totalDiff > 0 ? `+${totalDiff.toLocaleString()}` : totalDiff.toLocaleString()}
-              </td>
-              <td class="text-right font-mono ${totalDiff > 0 ? "overrun" : "saving"}">
-                ${totalPrev > 0 ? (totalDiff > 0 ? `+${totalPct.toFixed(2)}` : totalPct.toFixed(2)) : "0.00"}%
-              </td>
+          </tbody>
+        </table>
+
+        <h3>1.2. Станции с наибольшей экономией ресурсов (Лидеры снижения расхода, не более 5 объектов)</h3>
+        <p>Ниже представлены железнодорожные станции, достигшие наибольшей экономии электрической энергии относительно сопоставимого прошлого года, отсортированные от лучших (с наибольшим сбережением) к худшим:</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Железнодорожная станция</th>
+              <th class="text-right">Текущее потребление (кВт·ч)</th>
+              <th class="text-right">Прошлый год (кВт·ч)</th>
+              <th class="text-right">Экономия (кВт·ч)</th>
+              <th class="text-right">Снижение (%)</th>
             </tr>
+          </thead>
+          <tbody>
+            ${bestStations.length === 0 ? `
+              <tr>
+                <td colspan="5" style="text-align: center; color: #718096; font-style: italic; padding: 12px;">Станций с чистым снижением энергопотребления за период не обнаружено.</td>
+              </tr>
+            ` : bestStations.map(row => `
+              <tr>
+                <td><strong>${row.name}</strong></td>
+                <td class="text-right font-mono">${row.curr.toLocaleString()}</td>
+                <td class="text-right font-mono" style="color: #4a5568;">${row.prev.toLocaleString()}</td>
+                <td class="text-right font-mono saving">${row.diff.toLocaleString()}</td>
+                <td class="text-right font-mono saving">${row.pct.toFixed(2)}%</td>
+              </tr>
+            `).join("")}
           </tbody>
         </table>
 
@@ -819,7 +861,60 @@ export default function App() {
           `;
         }).join("")}
 
-        <h2>РАЗДЕЛ 3. ТЕХНИЧЕСКИЕ И ОРГАНИЗАЦИОННЫЕ РЕКОМЕНДАЦИИ</h2>
+        <h2>РАЗДЕЛ 3. АНАЛИЗ ТЕХНОЛОГИЧЕСКИХ ПОТЕРЬ В ЭЛЕКТРИЧЕСКИХ СЕТЯХ</h2>
+        <p>Сопоставительный учет и локализация технологических потерь (линии электропередачи, силовые понижающие трансформаторы, КТП) за отчетный период позволяет оценить КПД сетевой инфраструктуры:</p>
+
+        <div style="margin-left: 15px; margin-bottom: 15px; font-size: 10pt; background-color: #f7fafc; border-left: 4px solid #4a5568; padding: 10px;">
+          Суммарные фактические технологические потери в электрических сетях участка составили: <strong>${totalLossCurrent.toLocaleString()} кВт·ч</strong>.<br/>
+          Аналогичный показатель за прошлый год: <strong>${totalLossPrev.toLocaleString()} кВт·ч</strong>.<br/>
+          Абсолютное изменение уровня потерь: 
+          <span class="${totalLossDiff > 0 ? "overrun" : "saving"}">
+            <strong>${totalLossDiff > 0 ? `+${totalLossDiff.toLocaleString()}` : totalLossDiff.toLocaleString()} кВт·ч</strong> 
+            (${totalLossPrev > 0 ? (totalLossDiff > 0 ? `+${totalLossPct.toFixed(2)}` : totalLossPct.toFixed(2)) : "0.00"}%)
+          </span>.<br/>
+          Динамика потерь оценивается как: <strong>${totalLossDiff > 0 ? "ОТРИЦАТЕЛЬНАЯ (РОСТ ХОЛОСТОГО ХОДА И ПОТЕРЬ В ПРОВОДНИКАХ)" : "ПОЛОЖИТЕЛЬНАЯ (ПОВЫШЕНИЕ ЭНЕРГЕТИЧЕСКОЙ ЭФФЕКТИВНОСТИ СЕТИ)"}</strong>.
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Объект электрической сети</th>
+              <th>Закрепленная станция</th>
+              <th>Тип энергообъекта</th>
+              <th class="text-right">Потери за текущий период (кВт·ч)</th>
+              <th class="text-right">Потери за прошлый год (кВт·ч)</th>
+              <th class="text-right">Изменение потерь (кВт·ч)</th>
+              <th class="text-right">Динамика (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lossObjects.map(lo => {
+              const currL = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+              const prevL = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+              const diffL = currL - prevL;
+              const pctL = prevL > 0 ? (diffL / prevL) * 100 : 0;
+              const st = stations.find(s => s.id === lo.stationId);
+              const loTypeLabel = (lo.name.toLowerCase().includes('ктп') || lo.name.toLowerCase().includes('трансф')) ? 'КТП / Трансформатор' : 'Фидер / ЛЭП';
+              const diffText = diffL > 0 ? `+${diffL.toLocaleString()}` : diffL.toLocaleString();
+              const pctText = prevL > 0 ? (diffL > 0 ? `+${pctL.toFixed(1)}%` : `${pctL.toFixed(1)}%`) : (currL > 0 ? "+100%" : "0.0%");
+              const statusClass = diffL > 0 ? "overrun" : diffL < 0 ? "saving" : "neutral";
+
+              return `
+                <tr>
+                  <td><strong>${lo.name}</strong></td>
+                  <td>${st ? st.name : "Вне станций"}</td>
+                  <td>${loTypeLabel}</td>
+                  <td class="text-right font-mono">${currL.toLocaleString()}</td>
+                  <td class="text-right font-mono" style="color: #718096;">${prevL.toLocaleString()}</td>
+                  <td class="text-right font-mono ${statusClass}"><strong>${diffText}</strong></td>
+                  <td class="text-right ${statusClass}">${pctText}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+
+        <h2>РАЗДЕЛ 4. ТЕХНИЧЕСКИЕ И ОРГАНИЗАЦИОННЫЕ РЕКОМЕНДАЦИИ</h2>
         <p>На основе полученной сопоставительной картины ведомостей расхода в учетном периоде сформированы адресно-целевые инструкции:</p>
         
         <ul class="rec-list">
@@ -870,6 +965,305 @@ export default function App() {
     downloadLink.click();
     document.body.removeChild(downloadLink);
     URL.revokeObjectURL(url);
+  };
+
+  // --- EXPORT TO POWERPOINT (.PPTX) ---
+  const exportReportToPptx = () => {
+    const currentMonthLabel = selectedPeriodName;
+    const pptx = new pptxgen();
+    pptx.layout = 'LAYOUT_16x9';
+
+    // Calculate totals & stats
+    const totalCurrent = stations.reduce((sum, st) => {
+      const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+      return sum + readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+    }, 0);
+    const totalPrev = stations.reduce((sum, st) => {
+      const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+      return sum + readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+    }, 0);
+    const totalDiff = totalCurrent - totalPrev;
+    const totalPct = totalPrev > 0 ? (totalDiff / totalPrev) * 100 : 0;
+
+    // Slices for leaders
+    const stationDiffs = stations.map(st => {
+      const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const diff = curr - prev;
+      const pct = prev > 0 ? (diff / prev) * 100 : 0;
+      return { id: st.id, name: st.name, curr, prev, diff, pct };
+    });
+
+    const worstStations = stationDiffs.filter(s => s.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 5);
+    const bestStations = stationDiffs.filter(s => s.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 5);
+
+    // Categories
+    const targetCategories = ["Освещение горловин", "Бытовые нагрузки", "Отопление"];
+    const categoryInfo = targetCategories.map(cat => {
+      const catPoints = supplyPoints.filter(p => p.category === cat && p.isActive);
+      const catTotalCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const catTotalPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+      const catTotalDiff = catTotalCurr - catTotalPrev;
+      const catTotalPct = catTotalPrev > 0 ? (catTotalDiff / catTotalPrev) * 100 : 0;
+      return { category: cat, curr: catTotalCurr, prev: catTotalPrev, diff: catTotalDiff, pct: catTotalPct };
+    });
+
+    // Losses
+    const totalLossCurrent = lossReadings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+    const totalLossPrev = lossReadings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+    const totalLossDiff = totalLossCurrent - totalLossPrev;
+    const totalLossPct = totalLossPrev > 0 ? (totalLossDiff / totalLossPrev) * 100 : 0;
+
+    // SLIDE 1: Title Slide
+    let slide1 = pptx.addSlide();
+    slide1.addText("", { x: 0, y: 0, w: '100%', h: '100%', fill: { color: '0F172A' } }); // Dark background
+    slide1.addText("ОАО РЖД • ЦЕНТР СБЕРЕЖЕНИЯ ЭНЕРГОРЕСУРСОВ", { x: 0.8, y: 1.5, w: 10.0, h: 0.4, fontSize: 13, bold: true, color: '3B82F6', fontFace: 'Arial' });
+    slide1.addText("ЭНЕРГЕТИЧЕСКИЙ АУДИТ Ж/Д ИНФРАСТРУКТУРЫ", { x: 0.8, y: 2.0, w: 11.5, h: 1.2, fontSize: 26, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+    slide1.addText(`Информационный доклад по итогам комплексного аудита\nОтчетный период: ${currentMonthLabel} ${selectedYear} г.`, { x: 0.8, y: 3.4, w: 10.0, h: 0.8, fontSize: 13, color: '94A3B8', fontFace: 'Arial' });
+    slide1.addText("", { x: 0.8, y: 4.5, w: 5.0, h: 0.05, fill: { color: 'E2E8F0' } });
+    slide1.addText("Сгенерировано автоматически на основе цифровой платформы", { x: 0.8, y: 4.8, w: 8.0, h: 0.4, fontSize: 11, italic: true, color: '64748B', fontFace: 'Arial' });
+
+    // SLIDE 2: KPI Dashboard
+    let slide2 = pptx.addSlide();
+    slide2.addText("АНАЛИТИКА ЭНЕРГОПОТРЕБЛЕНИЯ УЧАСТКА", { x: 0.5, y: 0.4, w: 11.0, h: 0.4, fontSize: 18, bold: true, color: '1E3A8A' });
+    slide2.addText(`Общие показатели энергопотребления за ${currentMonthLabel} ${selectedYear} г.`, { x: 0.5, y: 0.8, w: 11.0, h: 0.3, fontSize: 11, color: '475569' });
+
+    slide2.addText(`Текущий расход:\n${totalCurrent.toLocaleString()} кВт·ч`, {
+      x: 0.5, y: 1.4, w: 3.5, h: 1.5,
+      fill: { color: 'EFF6FF' },
+      border: { type: 'solid', color: 'BFDBFE', size: 1 },
+      align: 'center', valign: 'middle',
+      fontSize: 16, bold: true, color: '1E40AF', fontFace: 'Arial'
+    } as any);
+
+    slide2.addText(`Аналогичный период прошлого года:\n${totalPrev.toLocaleString()} кВт·ч`, {
+      x: 4.3, y: 1.4, w: 3.5, h: 1.5,
+      fill: { color: 'F8FAFC' },
+      border: { type: 'solid', color: 'E2E8F0', size: 1 },
+      align: 'center', valign: 'middle',
+      fontSize: 14, color: '334155', fontFace: 'Arial'
+    } as any);
+
+    const diffColor = totalDiff > 0 ? 'B91C1C' : '047857';
+    const diffBg = totalDiff > 0 ? 'FEF2F2' : 'ECFDF5';
+    const diffBorder = totalDiff > 0 ? 'FCA5A5' : 'A7F3D0';
+    const statusText = totalDiff > 0 ? 'ОБНАРУЖЕН СИСТЕМНЫЙ ПЕРЕРАСХОД' : 'СИСТЕМНАЯ ЭКОНОМИЯ';
+    slide2.addText(`Изменение расхода (Динамика):\n${totalDiff > 0 ? `+${totalDiff.toLocaleString()}` : totalDiff.toLocaleString()} кВт·ч (${totalPct.toFixed(2)}%)\n\n[ ${statusText} ]`, {
+      x: 8.1, y: 1.4, w: 4.7, h: 1.5,
+      fill: { color: diffBg },
+      border: { type: 'solid', color: diffBorder, size: 1 },
+      align: 'center', valign: 'middle',
+      fontSize: 13, bold: true, color: diffColor, fontFace: 'Arial'
+    } as any);
+
+    slide2.addText("Ключевые выводы аудита периода:", { x: 0.5, y: 3.2, w: 10.0, h: 0.3, fontSize: 13, bold: true, color: '1F2937' });
+    let conclusions = [
+      `Суммарный расход электроэнергии составил ${totalCurrent.toLocaleString()} кВт·ч, разница с прошлым годом: ${totalDiff > 0 ? '+' : ''}${totalDiff.toLocaleString()} кВт·ч.`,
+      totalDiff > 0 
+        ? "Превышение нормативов обусловлено ростом бытовых и отопительных нагрузок на ключевых станциях. Требуется внеплановый технический аудит регулирующих приборов."
+        : "Положительная динамика обусловлена успешным завершением программы модернизации светодиодных осветительных систем и строгим контролем графиков дежурного обогрева.",
+      "Доля энергии, учтенной поверенными приборами учета, превышает 85%. Остальной объем рассчитан по расчетным коэффициентам, что требует постепенного дооснащения."
+    ];
+    slide2.addText(conclusions.map(c => `• ${c}`).join('\n'), { x: 0.5, y: 3.6, w: 12.3, h: 1.6, fontSize: 11, color: '374151', lineSpacing: 20 });
+
+    // SLIDE 3: Worst Performing Stations (Overruns, Max 5)
+    let slide3 = pptx.addSlide();
+    slide3.addText("ЛИДЕРЫ РОСТА РАСХОДА (ПЕРЕРАСХОД)", { x: 0.5, y: 0.4, w: 11.0, h: 0.4, fontSize: 18, bold: true, color: 'B91C1C' });
+    slide3.addText("Станции с наибольшим превышением потребления относительно прошлого года (Worst 5, от худших к лучшим):", { x: 0.5, y: 0.8, w: 11.0, h: 0.3, fontSize: 11, color: '475569' });
+
+    if (worstStations.length === 0) {
+      slide3.addText("Превышений нормативов расхода не обнаружено!\nВсе подразделения работают в зоне стабильной экономии.", { x: 1.0, y: 2.0, w: 11.0, h: 1.5, align: 'center', fontSize: 16, bold: true, color: '047857' });
+    } else {
+      let worstTableRows: any[][] = [
+        [
+          { text: 'Железнодорожная станция', options: { fill: '991B1B', color: 'FFFFFF', bold: true } as any },
+          { text: 'Текущий расход (кВт·ч)', options: { fill: '991B1B', color: 'FFFFFF', bold: true, align: 'right' } as any },
+          { text: 'Прошлый год (кВт·ч)', options: { fill: '991B1B', color: 'FFFFFF', bold: true, align: 'right' } as any },
+          { text: 'Перерасход (кВт·ч)', options: { fill: '991B1B', color: 'FFFFFF', bold: true, align: 'right' } as any },
+          { text: 'Отклонение (%)', options: { fill: '991B1B', color: 'FFFFFF', bold: true, align: 'right' } as any }
+        ]
+      ];
+      worstStations.forEach(s => {
+        worstTableRows.push([
+          { text: s.name, options: { bold: true } as any },
+          { text: s.curr.toLocaleString(), options: { align: 'right' } as any },
+          { text: s.prev.toLocaleString(), options: { align: 'right' } as any },
+          { text: `+${(s.diff).toLocaleString()}`, options: { align: 'right', color: 'B91C1C', bold: true } as any },
+          { text: `+${s.pct.toFixed(2)}%`, options: { align: 'right', color: 'B91C1C', bold: true } as any }
+        ]);
+      });
+
+      slide3.addTable(worstTableRows, {
+        x: 0.5, y: 1.3, w: 12.3, h: 2.0,
+        fontSize: 10.5, fontFace: 'Arial',
+        colW: [4.0, 2.0, 2.0, 2.2, 2.1],
+        border: { type: 'solid', color: 'F3F4F6', size: 1 }
+      } as any);
+
+      slide3.addText("Предписываемые корректирующие действия:", { x: 0.5, y: 3.8, w: 10.0, h: 0.3, fontSize: 12, bold: true, color: '111827' });
+      let worstRecs = [
+        "Проверить исправность систем коммерческого учета на вводных фидерах указанных станций.",
+        "Выявить скрытые утечки мощности во внерабочее дежурное время.",
+        "Ограничить использование бытовых приборов высокой мощности в дежурных помещениях."
+      ];
+      slide3.addText(worstRecs.map(r => `• ${r}`).join('\n'), { x: 0.5, y: 4.1, w: 12.3, h: 1.0, fontSize: 10.5, color: '4B5563', lineSpacing: 18 });
+    }
+
+    // SLIDE 4: Best Performing Stations (Savings, Max 5)
+    let slide4 = pptx.addSlide();
+    slide4.addText("ЛИДЕРЫ СНИЖЕНИЯ РАСХОДА (ЭКОНОМИЯ)", { x: 0.5, y: 0.4, w: 11.0, h: 0.4, fontSize: 18, bold: true, color: '047857' });
+    slide4.addText("Станции, достигшие наибольшего сокращения электропотребления относительно прошлого года (Best 5, от лучших к худшим):", { x: 0.5, y: 0.8, w: 11.0, h: 0.3, fontSize: 11, color: '475569' });
+
+    if (bestStations.length === 0) {
+      slide4.addText("За отчетный период ни одна станция не зафиксировала чистую экономию электроэнергии.", { x: 1.0, y: 2.0, w: 11.0, h: 1.5, align: 'center', fontSize: 14, italic: true, color: '64748B' });
+    } else {
+      let bestTableRows: any[][] = [
+        [
+          { text: 'Железнодорожная станция', options: { fill: '065F46', color: 'FFFFFF', bold: true } as any },
+          { text: 'Текущий расход (кВт·ч)', options: { fill: '065F46', color: 'FFFFFF', bold: true, align: 'right' } as any },
+          { text: 'Прошлый год (кВт·ч)', options: { fill: '065F46', color: 'FFFFFF', bold: true, align: 'right' } as any },
+          { text: 'Снижение (кВт·ч)', options: { fill: '065F46', color: 'FFFFFF', bold: true, align: 'right' } as any },
+          { text: 'Экономия (%)', options: { fill: '065F46', color: 'FFFFFF', bold: true, align: 'right' } as any }
+        ]
+      ];
+      bestStations.forEach(s => {
+        bestTableRows.push([
+          { text: s.name, options: { bold: true } as any },
+          { text: s.curr.toLocaleString(), options: { align: 'right' } as any },
+          { text: s.prev.toLocaleString(), options: { align: 'right' } as any },
+          { text: (s.diff).toLocaleString(), options: { align: 'right', color: '047857', bold: true } as any },
+          { text: `${s.pct.toFixed(2)}%`, options: { align: 'right', color: '047857', bold: true } as any }
+        ]);
+      });
+
+      slide4.addTable(bestTableRows, {
+        x: 0.5, y: 1.3, w: 12.3, h: 2.0,
+        fontSize: 10.5, fontFace: 'Arial',
+        colW: [4.0, 2.0, 2.0, 2.2, 2.1],
+        border: { type: 'solid', color: 'F3F4F6', size: 1 }
+      } as any);
+
+      slide4.addText("Положительный опыт к тиражированию:", { x: 0.5, y: 3.8, w: 10.0, h: 0.3, fontSize: 12, bold: true, color: '111827' });
+      let bestRecs = [
+        "Поощрить ответственных лиц за строгое соблюдение регламентов энергоэффективности на станциях-лидерах.",
+        "Изучить и внедрить схемы автоматического управления наружным освещением на данных объектах.",
+        "Масштабировать технологии оптимизации режимов обогрева на другие участки железной дороги."
+      ];
+      slide4.addText(bestRecs.map(r => `• ${r}`).join('\n'), { x: 0.5, y: 4.1, w: 12.3, h: 1.0, fontSize: 10.5, color: '4B5563', lineSpacing: 18 });
+    }
+
+    // SLIDE 5: Segment Analysis
+    let slide5 = pptx.addSlide();
+    slide5.addText("СЕГМЕНТНЫЙ АНАЛИЗ ГРУПП НАГРУЗОК", { x: 0.5, y: 0.4, w: 11.0, h: 0.4, fontSize: 18, bold: true, color: '1E3A8A' });
+    slide5.addText("Результаты сопоставительного анализа ключевых технологических групп энергопотребителей участка:", { x: 0.5, y: 0.8, w: 11.0, h: 0.3, fontSize: 11, color: '475569' });
+
+    let catTableRows: any[][] = [
+      [
+        { text: 'Категория потребителей', options: { fill: '1E3A8A', color: 'FFFFFF', bold: true } as any },
+        { text: 'Текущий расход (кВт·ч)', options: { fill: '1E3A8A', color: 'FFFFFF', bold: true, align: 'right' } as any },
+        { text: 'Прошлый год (кВт·ч)', options: { fill: '1E3A8A', color: 'FFFFFF', bold: true, align: 'right' } as any },
+        { text: 'Изменение (кВт·ч)', options: { fill: '1E3A8A', color: 'FFFFFF', bold: true, align: 'right' } as any },
+        { text: 'Динамика (%)', options: { fill: '1E3A8A', color: 'FFFFFF', bold: true, align: 'right' } as any }
+      ]
+    ];
+    categoryInfo.forEach(c => {
+      const isO = c.diff > 0;
+      catTableRows.push([
+        { text: c.category, options: { bold: true } as any },
+        { text: c.curr.toLocaleString(), options: { align: 'right' } as any },
+        { text: c.prev.toLocaleString(), options: { align: 'right' } as any },
+        { text: `${isO ? '+' : ''}${c.diff.toLocaleString()}`, options: { align: 'right', color: isO ? 'B91C1C' : '047857', bold: true } as any },
+        { text: `${isO ? '+' : ''}${c.pct.toFixed(2)}%`, options: { align: 'right', color: isO ? 'B91C1C' : '047857', bold: true } as any }
+      ]);
+    });
+
+    slide5.addTable(catTableRows, {
+      x: 0.5, y: 1.4, w: 12.3, h: 2.0,
+      fontSize: 11, fontFace: 'Arial',
+      colW: [4.0, 2.0, 2.0, 2.2, 2.1],
+      border: { type: 'solid', color: 'F3F4F6', size: 1 }
+    } as any);
+
+    slide5.addText("Технологические выводы:", { x: 0.5, y: 3.8, w: 10.0, h: 0.3, fontSize: 12, bold: true, color: '111827' });
+    let catInsights = [
+      "Категория Освещения горловин стабильна благодаря внедрению автоматических астрономических реле.",
+      "Отопление и обогрев демонстрируют высокую температурную чувствительность. Рекомендуется установка локальных термостатов.",
+      "Хозяйственно-бытовые нагрузки требуют регулярных плановых проверок на предмет использования неэффективных нагревательных приборов."
+    ];
+    slide5.addText(catInsights.map(i => `• ${i}`).join('\n'), { x: 0.5, y: 4.1, w: 12.3, h: 1.0, fontSize: 10.5, color: '4B5563', lineSpacing: 18 });
+
+    // SLIDE 6: Network Loss Analysis (Потери)
+    let slide6 = pptx.addSlide();
+    slide6.addText("АНАЛИЗ ТЕХНОЛОГИЧЕСКИХ ПОТЕРЬ В СЕТИ", { x: 0.5, y: 0.4, w: 11.0, h: 0.4, fontSize: 18, bold: true, color: '334155' });
+    slide6.addText("Оценка величины и динамики потерь в ЛЭП и понижающих трансформаторах за отчетный период:", { x: 0.5, y: 0.8, w: 11.0, h: 0.3, fontSize: 11, color: '475569' });
+
+    const lossIsO = totalLossDiff > 0;
+    slide6.addText(`Общие сетевые потери:\n${totalLossCurrent.toLocaleString()} кВт·ч`, {
+      x: 0.5, y: 1.3, w: 4.0, h: 1.2,
+      fill: { color: 'F1F5F9' },
+      align: 'center', valign: 'middle',
+      fontSize: 14, bold: true, color: '334155', fontFace: 'Arial'
+    } as any);
+    slide6.addText(`Динамика к прошлому году:\n${lossIsO ? '+' : ''}${totalLossDiff.toLocaleString()} кВт·ч (${lossIsO ? '+' : ''}${totalLossPct.toFixed(2)}%)\n[ ${lossIsO ? 'РОСТ ТЕХНИЧЕСКИХ ПОТЕРЬ' : 'СНИЖЕНИЕ ПОТЕРЬ'} ]`, {
+      x: 4.8, y: 1.3, w: 8.0, h: 1.2,
+      fill: { color: lossIsO ? 'FEF2F2' : 'ECFDF5' },
+      align: 'center', valign: 'middle',
+      fontSize: 12, bold: true, color: lossIsO ? 'B91C1C' : '047857', fontFace: 'Arial'
+    } as any);
+
+    let lossTableRows: any[][] = [
+      [
+        { text: 'Объект потерь (фидер / КТП)', options: { fill: '475569', color: 'FFFFFF', bold: true } as any },
+        { text: 'Закрепленная станция', options: { fill: '475569', color: 'FFFFFF', bold: true } as any },
+        { text: 'Тип', options: { fill: '475569', color: 'FFFFFF', bold: true } as any },
+        { text: 'Текущие потери (кВт·ч)', options: { fill: '475569', color: 'FFFFFF', bold: true, align: 'right' } as any },
+        { text: 'Изменение (кВт·ч)', options: { fill: '475569', color: 'FFFFFF', bold: true, align: 'right' } as any }
+      ]
+    ];
+    lossObjects.slice(0, 4).forEach(lo => {
+      const currL = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+      const prevL = lossReadings.filter(r => r.lossObjectId === lo.id && r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+      const diffL = currL - prevL;
+      const st = stations.find(s => s.id === lo.stationId);
+      const loO = diffL > 0;
+      lossTableRows.push([
+        { text: lo.name, options: { bold: true } as any },
+        { text: st ? st.name : "Вне станций", options: {} as any },
+        { text: (lo.name.toLowerCase().includes('ктп') || lo.name.toLowerCase().includes('трансф')) ? 'Трансф.' : 'ЛЭП', options: {} as any },
+        { text: currL.toLocaleString(), options: { align: 'right' } as any },
+        { text: `${loO ? '+' : ''}${diffL.toLocaleString()}`, options: { align: 'right', color: loO ? 'B91C1C' : '047857', bold: true } as any }
+      ]);
+    });
+
+    slide6.addTable(lossTableRows, {
+      x: 0.5, y: 2.8, w: 12.3, h: 1.5,
+      fontSize: 10, fontFace: 'Arial',
+      colW: [4.0, 2.5, 2.0, 2.0, 2.1],
+      border: { type: 'solid', color: 'F1F5F9', size: 1 }
+    } as any);
+
+    slide6.addText("Рекомендация: Провести локальный тепловизионный аудит и инструментальные замеры на КТП с растущим уровнем потерь.", { x: 0.5, y: 4.6, w: 12.3, h: 0.3, fontSize: 10.5, italic: true, color: '475569' });
+
+    // SLIDE 7: Closing / Technical Recommendations
+    let slide7 = pptx.addSlide();
+    slide7.addText("", { x: 0, y: 0, w: '100%', h: '100%', fill: { color: '1E3A8A' } }); // Solid Navy Closing
+    slide7.addText("ЭНЕРГОСБЕРЕЖЕНИЕ И КОРПОРАТИВНЫЕ СТАНДАРТЫ", { x: 1.0, y: 1.2, w: 10.0, h: 0.4, fontSize: 14, bold: true, color: '93C5FD', fontFace: 'Arial' });
+    slide7.addText("СВОДНЫЙ КОРПОРАТИВНЫЙ РЕГЛАМЕНТ ДЕЙСТВИЙ", { x: 1.0, y: 1.7, w: 11.0, h: 0.8, fontSize: 24, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+    
+    let endRecs = [
+      "1. Обеспечить 100% охват автоматизированных приборов учета во всех контрольных точках.",
+      "2. Провести регулировку астрономических реле и суточных таймеров прожекторного освещения.",
+      "3. Ограничить отопительные лимиты в необитаемых технических блок-контейнерах до +14°C.",
+      "4. Организовать регулярную тепловизионную диагностику контактных соединений КТП.",
+      "5. Своевременно производить замену и государственную поверку приборов коммерческого учета."
+    ];
+    slide7.addText(endRecs.join('\n\n'), { x: 1.0, y: 2.7, w: 11.0, h: 2.5, fontSize: 11.5, color: 'E0F2FE', fontFace: 'Arial', lineSpacing: 10 });
+    
+    slide7.addText(`Доклад подготовлен: ГИС-аналитика ОАО РЖД | ${new Date().toLocaleDateString("ru-RU")} в ${new Date().toLocaleTimeString("ru-RU")}`, { x: 1.0, y: 5.6, w: 10.0, h: 0.3, fontSize: 10, italic: true, color: '93C5FD', fontFace: 'Arial' });
+
+    const fileName = `Презентация_аудита_${selectedMonth.toString().padStart(2, '0')}_${selectedYear}.pptx`;
+    pptx.writeFile({ fileName });
   };
 
   // --- ACTIONS (CRUD) ---
@@ -923,6 +1317,8 @@ export default function App() {
     try {
       const nameVal = (pointModal.name || '').trim();
       const noteVal = (pointModal.note || '').trim();
+      const currK = pointModal.currKwh !== undefined ? Number(pointModal.currKwh) : 0;
+      const prevK = pointModal.prevKwh !== undefined ? Number(pointModal.prevKwh) : 0;
 
       if (pointModal.mode === 'add') {
         const newId = `tp-${Date.now()}`;
@@ -936,7 +1332,11 @@ export default function App() {
           calculationMethod: pointModal.calculationMethod || 'meter'
         };
         const updatedSps = [...supplyPoints, newPt];
-        const updatedRds = [...readings, { supplyPointId: newId, year: selectedYear, month: selectedMonth, value: 0 }];
+        const updatedRds = [
+          ...readings, 
+          { supplyPointId: newId, year: selectedYear, month: selectedMonth, value: currK },
+          { supplyPointId: newId, year: selectedYear - 1, month: selectedMonth, value: prevK }
+        ];
         syncDatabase(stations, updatedSps, categories, updatedRds, lossObjects, lossReadings);
       } else {
         const updatedSps = supplyPoints.map(p => p.id === pointModal.id ? {
@@ -948,7 +1348,26 @@ export default function App() {
           isActive: pointModal.isActive,
           calculationMethod: pointModal.calculationMethod || 'meter'
         } : p);
-        syncDatabase(stations, updatedSps, categories, readings, lossObjects, lossReadings);
+
+        let updatedRds = [...readings];
+        
+        // update or insert for selectedYear
+        const currIdx = updatedRds.findIndex(r => r.supplyPointId === pointModal.id && r.year === selectedYear && r.month === selectedMonth);
+        if (currIdx > -1) {
+          updatedRds[currIdx] = { ...updatedRds[currIdx], value: currK };
+        } else {
+          updatedRds.push({ supplyPointId: pointModal.id!, year: selectedYear, month: selectedMonth, value: currK });
+        }
+
+        // update or insert for selectedYear - 1
+        const prevIdx = updatedRds.findIndex(r => r.supplyPointId === pointModal.id && r.year === selectedYear - 1 && r.month === selectedMonth);
+        if (prevIdx > -1) {
+          updatedRds[prevIdx] = { ...updatedRds[prevIdx], value: prevK };
+        } else {
+          updatedRds.push({ supplyPointId: pointModal.id!, year: selectedYear - 1, month: selectedMonth, value: prevK });
+        }
+
+        syncDatabase(stations, updatedSps, categories, updatedRds, lossObjects, lossReadings);
       }
     } catch (err) {
       console.error("Error saving supply point", err);
@@ -977,14 +1396,14 @@ export default function App() {
     syncDatabase(stations, updatedSps, categories, readings, lossObjects, lossReadings);
   };
 
-  const updatePointValueInline = (spId: string, valStr: string) => {
+  const updatePointValueInline = (spId: string, valStr: string, year: number = selectedYear) => {
     const val = Number(valStr.replace(/\D/g, '')) || 0;
-    const exists = readings.find(r => r.supplyPointId === spId && r.year === selectedYear && r.month === selectedMonth);
+    const exists = readings.find(r => r.supplyPointId === spId && r.year === year && r.month === selectedMonth);
     let updatedRds: Reading[];
     if (exists) {
-      updatedRds = readings.map(r => (r.supplyPointId === spId && r.year === selectedYear && r.month === selectedMonth) ? { ...r, value: val } : r);
+      updatedRds = readings.map(r => (r.supplyPointId === spId && r.year === year && r.month === selectedMonth) ? { ...r, value: val } : r);
     } else {
-      updatedRds = [...readings, { supplyPointId: spId, year: selectedYear, month: selectedMonth, value: val }];
+      updatedRds = [...readings, { supplyPointId: spId, year: year, month: selectedMonth, value: val }];
     }
     syncDatabase(stations, supplyPoints, categories, updatedRds, lossObjects, lossReadings);
   };
@@ -2545,6 +2964,33 @@ export default function App() {
             </div>
           )}
 
+          {navigatedFromAnomalies && (
+            <div className="mb-6 p-4 rounded-xl border bg-amber-500/10 border-amber-500/30 text-amber-400 text-xs font-bold flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg shadow-amber-500/5 animate-fade-in">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-500 animate-pulse shrink-0" />
+                <div>
+                  <span className="block font-black">Режим анализа аномалий активен</span>
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block mt-0.5">Исследуются показатели и динамика выбранного объекта</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button 
+                  onClick={() => setAnomaliesModalOpen(true)}
+                  className="px-3.5 py-2 bg-amber-500 text-slate-950 hover:bg-amber-400 transition-all font-black rounded-lg flex items-center gap-1 text-xs cursor-pointer"
+                >
+                  ◀ Вернуться к списку аномалий
+                </button>
+                <button 
+                  onClick={() => setNavigatedFromAnomalies(false)}
+                  className="text-slate-400 hover:text-white transition-colors p-1.5 hover:bg-slate-800/50 rounded-lg"
+                  title="Закрыть режим анализа"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* TAB 1: ГЛАВНАЯ (HOME/SWOT) */}
           {activeTab === 'home' && (
             <div className="space-y-6">
@@ -2898,7 +3344,8 @@ export default function App() {
                               <th className="p-2.5">ТП фидер</th>
                               <th className="p-2.5">Группа нагрузок</th>
                               <th className="p-2.5">Способ расчета</th>
-                              <th className="p-2.5 text-right">Потребление (кВт·ч)</th>
+                              <th className="p-2.5 text-right">Потребление {selectedYear} (кВт·ч)</th>
+                              <th className="p-2.5 text-right">Потребление {selectedYear - 1} (кВт·ч)</th>
                               <th className="p-2.5 min-w-[200px] w-64">Причины / Заметки отклонений</th>
                               <th className="p-2.5 text-center">Действия</th>
                             </tr>
@@ -2906,6 +3353,7 @@ export default function App() {
                           <tbody className="divide-y divide-slate-800">
                             {supplyPoints.filter(p => p.stationId === activeStation.id).map(p => {
                               const reading = activeMonthReadings.find(r => r.supplyPointId === p.id);
+                              const prevReading = prevYearMonthReadings.find(r => r.supplyPointId === p.id);
                               const isSelected = p.id === selectedSupplyPointId;
                               return (
                                 <tr 
@@ -2950,9 +3398,19 @@ export default function App() {
                                   <td className="p-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                                     <input
                                       type="text"
+                                      key={`curr-${p.id}-${selectedYear}-${selectedMonth}-${reading ? reading.value : 0}`}
                                       defaultValue={reading ? reading.value : 0}
-                                      onBlur={(e) => updatePointValueInline(p.id, e.target.value)}
+                                      onBlur={(e) => updatePointValueInline(p.id, e.target.value, selectedYear)}
                                       className={`w-24 text-right px-2 py-1.5 text-sm border outline-none font-mono font-bold rounded ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white text-slate-800 border-slate-300'}`}
+                                    />
+                                  </td>
+                                  <td className="p-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                                    <input
+                                      type="text"
+                                      key={`prev-${p.id}-${selectedYear - 1}-${selectedMonth}-${prevReading ? prevReading.value : 0}`}
+                                      defaultValue={prevReading ? prevReading.value : 0}
+                                      onBlur={(e) => updatePointValueInline(p.id, e.target.value, selectedYear - 1)}
+                                      className={`w-24 text-right px-2 py-1.5 text-sm border outline-none font-mono font-bold rounded ${darkTheme ? 'bg-slate-800 border-slate-700 text-amber-500' : 'bg-white text-amber-700 border-slate-300'}`}
                                     />
                                   </td>
                                   <td className="p-2.5" onClick={(e) => e.stopPropagation()}>
@@ -2966,7 +3424,29 @@ export default function App() {
                                   </td>
                                   <td className="p-2.5 text-center" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center justify-center gap-2">
-                                      <button onClick={(e) => { e.stopPropagation(); setPointModal({ isOpen: true, mode: 'edit', id: p.id, name: p.name, stationId: p.stationId, category: p.category, note: p.note, isActive: p.isActive, calculationMethod: p.calculationMethod || 'meter' }) }} className="text-slate-400 hover:text-sky-400 text-xs">Правка</button>
+                                      <button 
+                                        onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          const currK = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
+                                          const prevK = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+                                          setPointModal({ 
+                                            isOpen: true, 
+                                            mode: 'edit', 
+                                            id: p.id, 
+                                            name: p.name, 
+                                            stationId: p.stationId, 
+                                            category: p.category, 
+                                            note: p.note, 
+                                            isActive: p.isActive, 
+                                            calculationMethod: p.calculationMethod || 'meter',
+                                            currKwh: currK,
+                                            prevKwh: prevK
+                                          }); 
+                                        }} 
+                                        className="text-slate-400 hover:text-sky-400 text-xs font-bold"
+                                      >
+                                        Правка
+                                      </button>
                                       <button onClick={(e) => { e.stopPropagation(); handleDeletePoint(p.id) }} className="text-slate-400 hover:text-rose-500 text-xs">Удалить</button>
                                     </div>
                                   </td>
@@ -3578,6 +4058,17 @@ export default function App() {
                       <ZapOff className="w-3.5 h-3.5 text-rose-500" />
                       Потери сети
                     </button>
+                    <button
+                      onClick={() => setReportSubTab('slides_presentation')}
+                      className={`px-3 py-1 text-xs font-bold rounded-md flex items-center gap-1.5 transition-all duration-150 ${
+                        reportSubTab === 'slides_presentation'
+                          ? 'bg-blue-600 text-white shadow'
+                          : `${darkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`
+                      }`}
+                    >
+                      <Presentation className="w-3.5 h-3.5 text-amber-500" strokeWidth={2.5} />
+                      Слайд-презентация
+                    </button>
                   </div>
 
                   <button
@@ -3585,7 +4076,15 @@ export default function App() {
                     className="bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 text-xs text-white rounded font-bold transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-sm hover:shadow"
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>Скачать отчет в Word (.doc)</span>
+                    <span>Скачать отчет Word (.doc)</span>
+                  </button>
+
+                  <button
+                    onClick={exportReportToPptx}
+                    className="bg-amber-600 hover:bg-amber-700 px-3.5 py-1.5 text-xs text-white rounded font-bold transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-sm hover:shadow"
+                  >
+                    <Presentation className="w-3.5 h-3.5" />
+                    <span>Скачать слайды PPTX</span>
                   </button>
 
                   <button onClick={() => window.print()} className="bg-blue-600 px-3.5 py-1.5 text-xs text-white rounded font-bold hover:bg-blue-700 transition-colors">
@@ -4504,6 +5003,30 @@ export default function App() {
                                                       >
                                                         <ExternalLink className="w-3 h-3" />
                                                       </button>
+                                                      <button
+                                                        title="Редактировать показатели ТП"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          const currK = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
+                                                          const prevK = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+                                                          setPointModal({
+                                                            isOpen: true,
+                                                            mode: 'edit',
+                                                            id: p.id,
+                                                            name: p.name,
+                                                            stationId: p.stationId,
+                                                            category: p.category,
+                                                            note: p.note,
+                                                            isActive: p.isActive,
+                                                            calculationMethod: p.calculationMethod || 'meter',
+                                                            currKwh: currK,
+                                                            prevKwh: prevK
+                                                          });
+                                                        }}
+                                                        className="p-1 rounded text-sky-400 hover:bg-sky-500/10 transition-colors shrink-0"
+                                                      >
+                                                        <Edit2 className="w-3 h-3" />
+                                                      </button>
                                                     </div>
                                                     <span className={`font-mono font-bold text-[10px] ${
                                                       diffPt > 0 ? 'text-rose-450' : diffPt < 0 ? 'text-emerald-400' : 'text-slate-400'
@@ -4688,6 +5211,30 @@ export default function App() {
                                                 className="p-1 rounded text-amber-400 hover:bg-amber-500/10 transition-colors shrink-0"
                                               >
                                                 <ExternalLink className="w-3.5 h-3.5" />
+                                              </button>
+                                              <button
+                                                title="Редактировать показатели ТП"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  const currK = readings.find(r => r.supplyPointId === pc.point.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
+                                                  const prevK = readings.find(r => r.supplyPointId === pc.point.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+                                                  setPointModal({
+                                                    isOpen: true,
+                                                    mode: 'edit',
+                                                    id: pc.point.id,
+                                                    name: pc.point.name,
+                                                    stationId: pc.point.stationId,
+                                                    category: pc.point.category,
+                                                    note: pc.point.note,
+                                                    isActive: pc.point.isActive,
+                                                    calculationMethod: pc.point.calculationMethod || 'meter',
+                                                    currKwh: currK,
+                                                    prevKwh: prevK
+                                                  });
+                                                }}
+                                                className="p-1 rounded text-sky-400 hover:bg-sky-500/10 transition-colors shrink-0"
+                                              >
+                                                <Edit2 className="w-3.5 h-3.5" />
                                               </button>
                                             </div>
                                             <div className="text-[9px] text-slate-500 font-semibold uppercase mt-0.5 pl-4 flex items-center gap-1">
@@ -5626,6 +6173,256 @@ export default function App() {
                 </div>
               )}
 
+              {reportSubTab === 'slides_presentation' && (
+                <div className="space-y-6 animate-fadeIn text-slate-100">
+                  {/* Executive Header */}
+                  <div className={`p-6 rounded-xl border ${darkTheme ? 'bg-slate-800/40 border-slate-700' : 'bg-white border-slate-200'} shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6`}>
+                    <div className="flex items-start gap-4">
+                      <div className="p-3 bg-amber-500/10 text-amber-500 rounded-lg shrink-0">
+                        <Presentation className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className={`text-sm font-bold ${darkTheme ? 'text-white' : 'text-slate-800'}`}>Интерактивный конструктор исполнительной презентации PPTX</h4>
+                        <p className="text-xs text-slate-400">
+                          Экспортируйте результаты сопоставительного энергоаудита в готовые презентационные слайды Microsoft PowerPoint.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={exportReportToPptx}
+                      className="bg-amber-600 hover:bg-amber-700 text-xs px-5 py-2.5 rounded-lg text-white font-bold font-mono transition-all duration-150 flex items-center gap-2 self-start md:self-center shadow-lg hover:shadow shadow-amber-600/10 shrink-0 cursor-pointer border-none outline-none"
+                    >
+                      <Presentation className="w-4 h-4" strokeWidth={2.5} />
+                      Сформировать презентацию (.PPTX)
+                    </button>
+                  </div>
+
+                  {/* Storyboard Layout Grid */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Макет слайд-шоу (Раскадровка презентации: 7 слайдов)</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                      
+                      {/* Slide 1: Title */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-2">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 1 • Титульный</span>
+                          <h5 className="text-[10px] uppercase font-bold text-blue-400 mt-2 font-mono">ОАО РЖД • ЦЕНТР СБЕРЕЖЕНИЯ ЭНЕРГОРЕСУРСОВ</h5>
+                          <h4 className={`text-xs font-extrabold leading-snug line-clamp-2 ${darkTheme ? 'text-white' : 'text-slate-850'}`}>ЭНЕРГЕТИЧЕСКИЙ АУДИТ Ж/Д ИНФРАСТРУКТУРЫ УЧАСТКА</h4>
+                        </div>
+                        <div className="text-[9px] text-slate-500 italic mt-4 font-mono">
+                          Учетный период: {selectedPeriodName} {selectedYear} г.
+                        </div>
+                        <div className="absolute top-2 right-2 text-slate-700/50">
+                          <Presentation className="w-12 h-12 stroke-1" />
+                        </div>
+                      </div>
+
+                      {/* Slide 2: KPI Dashboard */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-2">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 2 • Сводные KPI</span>
+                          <h4 className={`text-xs font-bold leading-snug mt-2 ${darkTheme ? 'text-white' : 'text-slate-850'}`}>АНАЛИТИКА ЭНЕРГОПОТРЕБЛЕНИЯ УЧАСТКА</h4>
+                          <div className="grid grid-cols-2 gap-2 mt-1 font-mono text-[9px]">
+                            <div className={`p-1.5 rounded ${darkTheme ? 'bg-slate-850' : 'bg-slate-200/55'}`}>
+                              <span className="text-slate-500 block">Расход {selectedYear} г.</span>
+                              <span className={`font-bold ${darkTheme ? 'text-white' : 'text-slate-800'}`}>
+                                {stations.reduce((sum, st) => {
+                                  const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                  return sum + readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                }, 0).toLocaleString()} кВт·ч
+                              </span>
+                            </div>
+                            <div className={`p-1.5 rounded ${darkTheme ? 'bg-slate-850' : 'bg-slate-200/55'}`}>
+                              <span className="text-slate-500 block">Прошлый год</span>
+                              <span className={`font-bold ${darkTheme ? 'text-slate-300' : 'text-slate-650'}`}>
+                                {stations.reduce((sum, st) => {
+                                  const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                  return sum + readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                }, 0).toLocaleString()} кВт·ч
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-[9px] text-slate-400 line-clamp-2 mt-1 leading-relaxed">
+                          Динамика: <span className={
+                            (() => {
+                              const curr = stations.reduce((sum, st) => {
+                                const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                return sum + readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              }, 0);
+                              const prev = stations.reduce((sum, st) => {
+                                const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                return sum + readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              }, 0);
+                              return curr - prev > 0 ? 'text-rose-500 font-bold' : 'text-emerald-500 font-bold';
+                            })()
+                          }>
+                            {(() => {
+                              const curr = stations.reduce((sum, st) => {
+                                const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                return sum + readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              }, 0);
+                              const prev = stations.reduce((sum, st) => {
+                                const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                return sum + readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              }, 0);
+                              const diff = curr - prev;
+                              const pct = prev > 0 ? (diff / prev) * 100 : 0;
+                              return `${diff > 0 ? '+' : ''}${diff.toLocaleString()} кВт·ч (${diff > 0 ? '+' : ''}${pct.toFixed(2)}%)`;
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Slide 3: Worst Performing Stations */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-1">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 3 • Лидеры роста</span>
+                          <h4 className="text-xs font-bold text-rose-400 uppercase font-mono mt-1">ЛИДЕРЫ РОСТА РАСХОДА (Worst 5)</h4>
+                          
+                          <div className="mt-2 space-y-1">
+                            {(() => {
+                              const diffs = stations.map(st => {
+                                const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                                const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                                return { name: st.name, diff: curr - prev };
+                              }).filter(s => s.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 3);
+
+                              if (diffs.length === 0) {
+                                return <span className="text-[10px] text-emerald-500 block italic">Превышений не обнаружено</span>;
+                              }
+                              return diffs.map((d, idx) => (
+                                <div key={idx} className="flex justify-between items-center text-[9px] border-b border-slate-800/60 pb-1">
+                                  <span className={`truncate max-w-[120px] ${darkTheme ? 'text-slate-400' : 'text-slate-600'}`}>{d.name}</span>
+                                  <span className="text-rose-500 font-mono">+{d.diff.toLocaleString()} кВт·ч</span>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        </div>
+                        <div className="text-[9px] text-slate-500 mt-2">
+                          Сортировка: от худших к лучшим. Макс 5 объектов.
+                        </div>
+                      </div>
+
+                      {/* Slide 4: Best Performing Stations */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-1">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 4 • Лидеры экономии</span>
+                          <h4 className="text-xs font-bold text-emerald-400 uppercase font-mono mt-1">ЛИДЕРЫ СНИЖЕНИЯ (Best 5)</h4>
+                          
+                          <div className="mt-2 space-y-1">
+                            {(() => {
+                              const diffs = stations.map(st => {
+                                const spsIds = supplyPoints.filter(p => p.stationId === st.id && p.isActive).map(p => p.id);
+                                const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                                const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                                return { name: st.name, diff: curr - prev };
+                              }).filter(s => s.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 3);
+
+                              if (diffs.length === 0) {
+                                return <span className="text-[10px] text-slate-500 block italic">Положительной динамики нет</span>;
+                              }
+                              return diffs.map((d, idx) => (
+                                <div key={idx} className="flex justify-between items-center text-[9px] border-b border-slate-800/60 pb-1">
+                                  <span className={`truncate max-w-[120px] ${darkTheme ? 'text-slate-400' : 'text-slate-600'}`}>{d.name}</span>
+                                  <span className="text-emerald-500 font-mono">{d.diff.toLocaleString()} кВт·ч</span>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        </div>
+                        <div className="text-[9px] text-slate-500 mt-2">
+                          Сортировка: от лучших к худшим. Макс 5 объектов.
+                        </div>
+                      </div>
+
+                      {/* Slide 5: Segment Analysis */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-1">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 5 • Сегментный анализ</span>
+                          <h4 className="text-xs font-bold text-indigo-400 uppercase font-mono mt-1">ТЕХНОЛОГИЧЕСКИЕ КАТЕГОРИИ</h4>
+                          
+                          <div className="mt-2 space-y-1 font-mono text-[9px]">
+                            {["Освещение горловин", "Бытовые нагрузки", "Отопление"].map((cat, idx) => {
+                              const catPoints = supplyPoints.filter(p => p.category === cat && p.isActive);
+                              const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                              const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                              const diff = curr - prev;
+                              return (
+                                <div key={idx} className="flex justify-between items-center pb-1 border-b border-slate-800/40">
+                                  <span className={`truncate max-w-[100px] ${darkTheme ? 'text-slate-400' : 'text-slate-600'}`}>{cat}</span>
+                                  <span className={diff > 0 ? "text-rose-500" : "text-emerald-500"}>
+                                    {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="text-[9px] text-slate-500 mt-2">
+                          Сравнение технологических групп потребителей участка.
+                        </div>
+                      </div>
+
+                      {/* Slide 6: Network Loss Analysis */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-1">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 6 • Сетевые потери</span>
+                          <h4 className="text-xs font-bold text-slate-400 uppercase font-mono mt-1">АНАЛИЗ ТЕХНОЛОГИЧЕСКИХ ПОТЕРЬ</h4>
+                          
+                          <div className="mt-2 text-[9px] font-mono space-y-1 bg-slate-850 p-2 rounded">
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Всего потерь:</span>
+                              <span className="font-bold text-white">
+                                {lossReadings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0).toLocaleString()} кВт·ч
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Динамика:</span>
+                              {(() => {
+                                const cur = lossReadings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+                                const prev = lossReadings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month)).reduce((sum, r) => sum + r.value, 0);
+                                const diff = cur - prev;
+                                return (
+                                  <span className={diff > 0 ? 'text-rose-500 font-bold' : 'text-emerald-500 font-bold'}>
+                                    {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-[9px] text-slate-500 mt-2">
+                          Сводная оценка потерь в ЛЭП и понижающих силовых КТП.
+                        </div>
+                      </div>
+
+                      {/* Slide 7: Technical recommendations */}
+                      <div className={`rounded-xl border p-4 flex flex-col justify-between h-[220px] relative overflow-hidden transition-all duration-150 hover:border-slate-500 ${darkTheme ? 'bg-slate-900 border-slate-850' : 'bg-slate-50 border-slate-200'} shadow-sm`}>
+                        <div className="space-y-1">
+                          <span className="text-[9px] bg-slate-800 text-slate-400 font-bold px-1.5 py-0.5 rounded uppercase">Слайд 7 • Рекомендации</span>
+                          <h4 className="text-xs font-bold text-amber-500 uppercase font-mono mt-1">РЕГЛАМЕНТ ДЕЙСТВИЙ</h4>
+                          
+                          <ul className="text-[8px] text-slate-400 mt-2 list-disc list-inside space-y-1 font-mono">
+                            <li>Автоматизация съема телеметрии</li>
+                            <li>Регулировка астрономических реле</li>
+                            <li>Ограничение отопления постов ЭЦ</li>
+                            <li>Тепловизионная диагностика КТП</li>
+                          </ul>
+                        </div>
+                        <div className="text-[9px] text-slate-500 mt-2">
+                          Комплексные адресно-технические предписания.
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -5911,6 +6708,30 @@ export default function App() {
                 <option value="estimated">🧮 Расчетный способ</option>
               </select>
             </div>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-450">Расход {selectedYear} г. ({RUSSIAN_MONTHS[selectedMonth - 1]}):</label>
+                <input
+                  type="number"
+                  required
+                  value={pointModal.currKwh !== undefined ? pointModal.currKwh : ''}
+                  onChange={(e) => setPointModal({ ...pointModal, currKwh: Number(e.target.value) })}
+                  className={`w-full text-xs px-2 py-1.5 border outline-none rounded font-mono ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white'}`}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-455">Расход {selectedYear - 1} г. ({RUSSIAN_MONTHS[selectedMonth - 1]}):</label>
+                <input
+                  type="number"
+                  required
+                  value={pointModal.prevKwh !== undefined ? pointModal.prevKwh : ''}
+                  onChange={(e) => setPointModal({ ...pointModal, prevKwh: Number(e.target.value) })}
+                  className={`w-full text-xs px-2 py-1.5 border outline-none rounded font-mono ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white'}`}
+                />
+              </div>
+            </div>
+
             <div className="space-y-1">
               <label className="text-[10px] uppercase font-bold text-slate-400">Заметки / Описание ТП:</label>
               <input
@@ -5927,123 +6748,169 @@ export default function App() {
           </form>
         </div>
       )}
+      {(() => {
+        // Defined helper for trend SVG charts
+        const renderCustomSvgTrendChart = (targetId: string, type: 'station' | 'supply_point' | 'loss') => {
+          let currValues: number[] = Array(12).fill(0);
+          let prevValues: number[] = Array(12).fill(0);
 
-      {/* --- ADD/EDIT LOSS OBJECTS MODAL DIALOG --- */}
-      {lossModal?.isOpen && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50 backdrop-blur-sm shadow-2xl">
-          <form onSubmit={handleSaveLossObject} className={`w-full max-w-xs rounded-xl border p-4 space-y-3.5 ${darkTheme ? 'bg-slate-900 border-slate-800' : 'bg-white text-slate-850'}`}>
-            <h3 className="font-bold text-xs border-b pb-1.5 border-slate-700">
-              {lossModal.mode === 'add' ? 'Создать объект потерь' : 'Параметры потерь сети'}
-            </h3>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400">Название объекта:</label>
-              <input
-                type="text"
-                required
-                value={lossModal.name}
-                onChange={(e) => setLossModal({ ...lossModal, name: e.target.value })}
-                className={`w-full text-xs px-2.5 py-1.5 border outline-none rounded ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white'}`}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400">Участок контроля (секция):</label>
-              <input
-                type="text"
-                value={lossModal.section}
-                onChange={(e) => setLossModal({ ...lossModal, section: e.target.value })}
-                placeholder="Пример: Бологовский диспетчерский участок"
-                className={`w-full text-xs px-2.5 py-1.5 border outline-none rounded ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white'}`}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400">Ассоциированная ж/д станция:</label>
-              <select
-                value={lossModal.stationId}
-                onChange={(e) => {
-                  const stId = e.target.value;
-                  const associatedStation = stations.find(s => s.id === stId);
-                  setLossModal({ 
-                    ...lossModal, 
-                    stationId: stId,
-                    section: lossModal.section || (associatedStation?.section || '')
-                  });
-                }}
-                className={`w-full text-xs px-2.5 py-1.5 border outline-none rounded ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white'}`}
-              >
-                <option value="">-- Без привязки к станции --</option>
-                {stations.map(st => (
-                  <option key={st.id} value={st.id}>{st.name}</option>
+          if (type === 'station') {
+            const spsIds = supplyPoints.filter(p => p.stationId === targetId).map(p => p.id);
+            for (let m = 1; m <= 12; m++) {
+              currValues[m - 1] = readings.filter(r => r.year === selectedYear && r.month === m && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+              prevValues[m - 1] = readings.filter(r => r.year === selectedYear - 1 && r.month === m && spsIds.includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+            }
+          } else if (type === 'supply_point') {
+            for (let m = 1; m <= 12; m++) {
+              const currR = readings.find(r => r.supplyPointId === targetId && r.year === selectedYear && r.month === m);
+              const prevR = readings.find(r => r.supplyPointId === targetId && r.year === selectedYear - 1 && r.month === m);
+              currValues[m - 1] = currR ? currR.value : 0;
+              prevValues[m - 1] = prevR ? prevR.value : 0;
+            }
+          } else if (type === 'loss') {
+            for (let m = 1; m <= 12; m++) {
+              const currR = lossReadings.find(r => r.lossObjectId === targetId && r.year === selectedYear && r.month === m);
+              const prevR = lossReadings.find(r => r.lossObjectId === targetId && r.year === selectedYear - 1 && r.month === m);
+              currValues[m - 1] = currR ? currR.value : 0;
+              prevValues[m - 1] = prevR ? prevR.value : 0;
+            }
+          }
+
+          const allValues = [...currValues, ...prevValues];
+          const maxVal = Math.max(...allValues, 100) * 1.15;
+          const minVal = Math.max(0, Math.min(...allValues) * 0.85);
+          const range = maxVal - minVal;
+
+          const width = 400;
+          const height = 150;
+          const padding = { top: 15, right: 15, bottom: 25, left: 45 };
+
+          const getX = (index: number) => {
+            return padding.left + (index * (width - padding.left - padding.right)) / 11;
+          };
+
+          const getY = (val: number) => {
+            if (range === 0) return padding.top + (height - padding.top - padding.bottom) / 2;
+            return height - padding.bottom - ((val - minVal) * (height - padding.top - padding.bottom)) / range;
+          };
+
+          const currPath = currValues.map((val, idx) => `${idx === 0 ? 'M' : 'L'} ${getX(idx)} ${getY(val)}`).join(' ');
+          const prevPath = prevValues.map((val, idx) => `${idx === 0 ? 'M' : 'L'} ${getX(idx)} ${getY(val)}`).join(' ');
+
+          return (
+            <div className="w-full h-full flex flex-col justify-between">
+              <svg className="w-full h-full min-h-[160px]" viewBox={`0 0 ${width} ${height}`}>
+                {/* Background Grid */}
+                {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
+                  const yVal = minVal + p * range;
+                  const y = getY(yVal);
+                  return (
+                    <g key={`grid-${idx}`}>
+                      <line
+                        x1={padding.left}
+                        y1={y}
+                        x2={width - padding.right}
+                        y2={y}
+                        stroke={darkTheme ? "#334155" : "#e2e8f0"}
+                        strokeDasharray="3,3"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x={padding.left - 8}
+                        y={y + 3}
+                        textAnchor="end"
+                        className="text-[9px] font-mono fill-slate-400 font-bold"
+                      >
+                        {Math.round(yVal).toLocaleString()}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* X Axis Labels */}
+                {RUSSIAN_MONTHS_SHORT.map((m, idx) => {
+                  const x = getX(idx);
+                  const isSelected = selectedMonth === (idx + 1);
+                  return (
+                    <text
+                      key={`x-lbl-${idx}`}
+                      x={x}
+                      y={height - 8}
+                      textAnchor="middle"
+                      className={`text-[9px] font-bold ${
+                        isSelected 
+                          ? "fill-blue-500 font-black" 
+                          : "fill-slate-400"
+                      }`}
+                    >
+                      {m}
+                    </text>
+                  );
+                })}
+
+                {/* Previous Year Path */}
+                <path
+                  d={prevPath}
+                  fill="none"
+                  stroke={darkTheme ? "rgba(148, 163, 184, 0.35)" : "rgba(100, 116, 139, 0.25)"}
+                  strokeWidth="2"
+                  strokeDasharray="4,4"
+                />
+
+                {/* Current Year Path */}
+                <path
+                  d={currPath}
+                  fill="none"
+                  stroke="#3b82f6"
+                  strokeWidth="3"
+                />
+
+                {/* Previous Year Dots */}
+                {prevValues.map((val, idx) => (
+                  <circle
+                    key={`dot-prev-${idx}`}
+                    cx={getX(idx)}
+                    cy={getY(val)}
+                    r="3"
+                    fill={darkTheme ? "#1e293b" : "#ffffff"}
+                    stroke={darkTheme ? "rgba(148, 163, 184, 0.6)" : "rgba(100, 116, 139, 0.4)"}
+                    strokeWidth="1.5"
+                  />
                 ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-slate-400">Примечания / Описание потерь:</label>
-              <input
-                type="text"
-                value={lossModal.note}
-                onChange={(e) => setLossModal({ ...lossModal, note: e.target.value })}
-                className={`w-full text-xs px-2.5 py-1.5 border outline-none rounded ${darkTheme ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white'}`}
-              />
-            </div>
-            <div className="flex gap-2 justify-end text-xs pt-1">
-              <button type="button" onClick={() => setLossModal(null)} className="px-3 py-1 bg-slate-800 rounded font-semibold text-slate-350">Отмена</button>
-              <button type="submit" className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded">Внести</button>
-            </div>
-          </form>
-        </div>
-      )}
 
-      {deleteConfirm?.isOpen && (
-        <div id="delete-confirm-overlay" className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-fade-in">
-          <div 
-            id="delete-confirm-box" 
-            className={`w-full max-w-sm rounded-2xl border p-6 shadow-2xl space-y-4 transform transition-all scale-100 ${
-              darkTheme ? 'bg-[#1e293b] border-slate-700 text-slate-100 shadow-slate-900/40' : 'bg-white border-slate-200 text-slate-800 shadow-slate-350/20'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-full bg-rose-500/10 text-rose-500 shrink-0">
-                <svg className="w-5 h-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </div>
-              <div className="space-y-1">
-                <h3 className="font-bold text-base tracking-tight">{deleteConfirm.title}</h3>
-                <p className="text-xs text-slate-400 font-sans leading-relaxed">{deleteConfirm.message}</p>
+                {/* Current Year Dots */}
+                {currValues.map((val, idx) => {
+                  const isSelected = selectedMonth === (idx + 1);
+                  return (
+                    <circle
+                      key={`dot-curr-${idx}`}
+                      cx={getX(idx)}
+                      cy={getY(val)}
+                      r={isSelected ? "5" : "3.5"}
+                      fill={isSelected ? "#3b82f6" : (darkTheme ? "#0f172a" : "#ffffff")}
+                      stroke="#3b82f6"
+                      strokeWidth={isSelected ? "3" : "2"}
+                    />
+                  );
+                })}
+              </svg>
+              <div className="flex justify-center gap-6 mt-1 text-[10px] font-bold">
+                <span className="flex items-center gap-1 text-slate-400">
+                  <span className="w-2.5 h-0.5 border-t border-dashed border-slate-400"></span>
+                  <span>{selectedYear - 1} г.</span>
+                </span>
+                <span className="flex items-center gap-1 text-blue-500">
+                  <span className="w-2.5 h-0.5 bg-blue-500"></span>
+                  <span>{selectedYear} г.</span>
+                </span>
               </div>
             </div>
+          );
+        };
 
-            <div className="flex justify-end gap-2 text-xs">
-              <button 
-                id="delete-confirm-cancel-btn"
-                type="button" 
-                onClick={() => setDeleteConfirm(null)} 
-                className={`px-3 py-1.5 rounded-lg border font-bold transition-colors ${
-                  darkTheme ? 'bg-slate-800 border-slate-700 text-slate-350 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                Отмена
-              </button>
-              <button 
-                id="delete-confirm-action-btn"
-                type="button" 
-                onClick={() => {
-                  try {
-                    deleteConfirm.onConfirm();
-                  } catch (err) {
-                    console.error("Error executing delete confirmation", err);
-                  } finally {
-                    setDeleteConfirm(null);
-                  }
-                }} 
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg transition-colors"
-              >
-                Удалить
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        (globalThis as any).renderCustomSvgTrendChart = renderCustomSvgTrendChart;
+        return null;
+      })()}
 
       {anomaliesModalOpen && (
         <div id="anomalies-list-modal" className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
@@ -6083,146 +6950,354 @@ export default function App() {
               </button>
             </div>
 
-            {/* Controls / Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 my-4">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  placeholder="Поиск по объекту или описанию..."
-                  value={anomalySearchQuery}
-                  onChange={(e) => setAnomalySearchQuery(e.target.value)}
-                  className={`w-full text-xs pl-9 pr-3 py-2.5 border outline-none rounded-lg font-medium ${
-                    darkTheme ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800'
-                  }`}
-                />
-              </div>
+            {selectedAnomalyForDynamics ? (
+              /* --- DETAILED DYNAMICS VIEW FOR SELECTED ANOMALY --- */
+              <div className="flex-1 flex flex-col overflow-hidden space-y-4">
+                {/* Back button and item title */}
+                <div className="flex items-center justify-between border-b border-slate-800/50 pb-3 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAnomalyForDynamics(null)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-sky-400 hover:text-sky-300 transition-colors"
+                  >
+                    <span>← Вернуться к списку аномалий</span>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
+                      {selectedAnomalyForDynamics.targetType === 'station' ? 'Станция' : selectedAnomalyForDynamics.targetType === 'supply_point' ? 'Точка ТП' : 'Объект потерь'}
+                    </span>
+                    {selectedAnomalyForDynamics.severity === 'high' ? (
+                      <span className="text-[9px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 font-black uppercase">Высокая 🔴</span>
+                    ) : selectedAnomalyForDynamics.severity === 'medium' ? (
+                      <span className="text-[9px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-black uppercase">Средняя 🟡</span>
+                    ) : (
+                      <span className="text-[9px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-450 border border-emerald-500/30 font-black uppercase">Низкая 🟢</span>
+                    )}
+                  </div>
+                </div>
 
-              <div>
-                <select
-                  value={anomalyTypeFilter}
-                  onChange={(e) => setAnomalyTypeFilter(e.target.value as any)}
-                  className={`w-full text-xs px-3 py-2.5 border outline-none rounded-lg font-bold ${
-                    darkTheme ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-300 text-slate-800'
-                  }`}
-                >
-                  <option value="all">⚡ Все типы объектов</option>
-                  <option value="station">🚉 Станции</option>
-                  <option value="supply_point">🔌 Точки поставки (ТП)</option>
-                  <option value="loss">📉 Технологические потери</option>
-                </select>
-              </div>
-
-              <div>
-                <select
-                  value={anomalySeverityFilter}
-                  onChange={(e) => setAnomalySeverityFilter(e.target.value as any)}
-                  className={`w-full text-xs px-3 py-2.5 border outline-none rounded-lg font-bold ${
-                    darkTheme ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-300 text-slate-800'
-                  }`}
-                >
-                  <option value="all">🔥 Все уровни критичности</option>
-                  <option value="high">🔴 Высокая критичность</option>
-                  <option value="medium">🟡 Средняя критичность</option>
-                  <option value="low">🟢 Низкая критичность</option>
-                </select>
-              </div>
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto min-h-[300px] max-h-[50vh] pr-1 space-y-3">
-              {(() => {
-                const filteredAnoms = currentAnomalies.filter(anom => {
-                  if (anomalySearchQuery) {
-                    const q = anomalySearchQuery.toLowerCase();
-                    const matchName = anom.targetName.toLowerCase().includes(q);
-                    const matchDesc = anom.description.toLowerCase().includes(q);
-                    const matchMetric = anom.metric.toLowerCase().includes(q);
-                    if (!matchName && !matchDesc && !matchMetric) return false;
-                  }
-                  if (anomalySeverityFilter !== 'all' && anom.severity !== anomalySeverityFilter) return false;
-                  if (anomalyTypeFilter !== 'all' && anom.targetType !== anomalyTypeFilter) return false;
-                  return true;
-                });
-
-                if (filteredAnoms.length === 0) {
-                  return (
-                    <div className="text-center py-12 space-y-2">
-                      <div className="text-3xl">🕊️</div>
-                      <p className="text-sm font-bold text-slate-400">Аномалий с выбранными фильтрами не обнаружено</p>
-                      <p className="text-xs text-slate-500">Попробуйте сбросить фильтры поиска или выбрать другой период.</p>
-                    </div>
-                  );
-                }
-
-                return filteredAnoms.map(anom => {
-                  const getSeverityBadge = (sev: string) => {
-                    if (sev === 'high') {
-                      return <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/25">Высокая 🔴</span>;
-                    }
-                    if (sev === 'medium') {
-                      return <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/25">Средняя 🟡</span>;
-                    }
-                    return <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-450 border border-emerald-500/25">Низкая 🟢</span>;
-                  };
-
-                  const getTargetLabel = (type: string) => {
-                    if (type === 'station') return 'Железнодорожная станция';
-                    if (type === 'supply_point') return 'Точка ТП';
-                    return 'Объект потерь сети';
-                  };
-
-                  return (
-                    <div 
-                      key={anom.id}
-                      onClick={() => {
-                        if (anom.targetType === 'station') {
-                          setSelectedStationId(anom.targetId);
-                          setActiveTab('stations');
-                        } else if (anom.targetType === 'supply_point') {
-                          const point = supplyPoints.find(p => p.id === anom.targetId);
-                          if (point) {
-                            setSelectedStationId(point.stationId);
-                            setSelectedSupplyPointId(point.id);
-                            setActiveTab('stations');
-                          }
-                        } else if (anom.targetType === 'loss') {
-                          setSelectedLossId(anom.targetId);
-                          setActiveTab('losses');
-                        }
-                        setAnomaliesModalOpen(false);
-                      }}
-                      className={`p-4 rounded-xl border cursor-pointer transition-all duration-150 active:scale-[0.99] group ${
-                        darkTheme 
-                          ? 'bg-slate-950/45 border-slate-800 hover:border-blue-500 hover:bg-slate-900/60' 
-                          : 'bg-slate-50 border-slate-200 hover:border-blue-400 hover:bg-white'
-                      }`}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[9px] font-extrabold text-slate-450 uppercase tracking-widest">{getTargetLabel(anom.targetType)}</span>
-                            {getSeverityBadge(anom.severity)}
-                          </div>
-                          <h4 className={`text-sm font-extrabold tracking-tight ${darkTheme ? 'text-white' : 'text-slate-900'} group-hover:text-blue-500 transition-colors`}>
-                            {anom.targetName}
-                          </h4>
-                          <p className="text-xs text-slate-400 leading-relaxed max-w-xl">{anom.description}</p>
-                        </div>
-                        <div className="shrink-0 flex sm:flex-col items-end gap-1.5 justify-between">
-                          <span className="text-xs font-mono font-bold px-3 py-1 bg-red-500/10 text-rose-400 border border-red-500/20 rounded-lg">
-                            {anom.metric}
-                          </span>
-                          <span className="text-[9px] font-bold text-blue-500 group-hover:underline flex items-center gap-0.5">
-                            Перейти →
-                          </span>
-                        </div>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 flex-1 overflow-y-auto pr-1">
+                  {/* Left Column: Dynamics chart & metadata */}
+                  <div className="md:col-span-7 space-y-4">
+                    <div className={`p-4 rounded-xl border ${darkTheme ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-blue-500" />
+                        <span>График динамики электропотребления (кВт·ч)</span>
+                      </h4>
+                      <div className="h-44 flex items-center justify-center">
+                        <CustomSvgTrendChart targetId={selectedAnomalyForDynamics.targetId} type={selectedAnomalyForDynamics.targetType} />
                       </div>
                     </div>
-                  );
-                });
-              })()}
-            </div>
+
+                    <div className={`p-4 rounded-xl border ${darkTheme ? 'bg-slate-950/45 border-slate-800' : 'bg-slate-50 border-slate-200'} space-y-2`}>
+                      <div className="text-xs font-extrabold text-blue-500 uppercase tracking-widest">Описание аномалии:</div>
+                      <h3 className="text-sm font-extrabold">{selectedAnomalyForDynamics.targetName}</h3>
+                      <p className="text-xs text-slate-400 leading-relaxed">{selectedAnomalyForDynamics.description}</p>
+                      <div className="pt-2 flex justify-between items-center">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase font-mono">Метрика отклонения: {selectedAnomalyForDynamics.metric}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedAnomalyForDynamics.targetType === 'station') {
+                              setSelectedStationId(selectedAnomalyForDynamics.targetId);
+                              setActiveTab('stations');
+                            } else if (selectedAnomalyForDynamics.targetType === 'supply_point') {
+                              const point = supplyPoints.find(p => p.id === selectedAnomalyForDynamics.targetId);
+                              if (point) {
+                                setSelectedStationId(point.stationId);
+                                setSelectedSupplyPointId(point.id);
+                                setActiveTab('stations');
+                              }
+                            } else if (selectedAnomalyForDynamics.targetType === 'loss') {
+                              setSelectedLossId(selectedAnomalyForDynamics.targetId);
+                              setActiveTab('losses');
+                            }
+                            setAnomaliesModalOpen(false);
+                            setSelectedAnomalyForDynamics(null);
+                          }}
+                          className="text-xs font-bold text-sky-400 hover:underline flex items-center gap-1"
+                        >
+                          Перейти к разделу в системе <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Interactive indicators editor */}
+                  <div className="md:col-span-5 space-y-4">
+                    <div className={`p-4 rounded-xl border flex flex-col h-full ${darkTheme ? 'bg-slate-950/45 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                        ✍️ Корректировка показателей
+                      </h4>
+                      <p className="text-[10px] text-slate-500 mb-3 font-semibold uppercase">
+                        {selectedAnomalyForDynamics.targetType === 'station'
+                          ? 'Суммарные показатели станции (изменяются через ТП):'
+                          : `Редактирование расхода помесячно за ${selectedYear-1} / ${selectedYear} гг.`}
+                      </p>
+
+                      {selectedAnomalyForDynamics.targetType === 'station' ? (
+                        <div className="space-y-2.5 flex-1 overflow-y-auto max-h-[300px]">
+                          <p className="text-[11px] text-slate-400 italic">Показатели железнодорожной станции складываются из расходов её точек поставки. Отредактируйте подключенные ТП ниже:</p>
+                          {supplyPoints.filter(p => p.stationId === selectedAnomalyForDynamics.targetId).map(p => {
+                            const pCurr = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
+                            const pPrev = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+                            return (
+                              <div key={p.id} className={`p-2 rounded-lg border flex items-center justify-between gap-2 text-xs ${darkTheme ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'}`}>
+                                <div className="truncate">
+                                  <div className="font-bold truncate" title={p.name}>{p.name}</div>
+                                  <div className="text-[9px] text-slate-500 font-semibold font-mono">25г: {pPrev.toLocaleString()} | 26г: {pCurr.toLocaleString()}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPointModal({
+                                      isOpen: true,
+                                      mode: 'edit',
+                                      id: p.id,
+                                      name: p.name,
+                                      stationId: p.stationId,
+                                      category: p.category,
+                                      note: p.note,
+                                      isActive: p.isActive,
+                                      calculationMethod: p.calculationMethod || 'meter',
+                                      currKwh: pCurr,
+                                      prevKwh: pPrev
+                                    });
+                                  }}
+                                  className="px-2.5 py-1 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 rounded text-[10px] font-bold"
+                                >
+                                  Править ТП
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[320px]">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-[9px] text-slate-500 uppercase font-bold border-b border-slate-800/60">
+                                <th className="text-left pb-1">Месяц</th>
+                                <th className="text-right pb-1">{selectedYear - 1} г.</th>
+                                <th className="text-right pb-1">{selectedYear} г.</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/30">
+                              {Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
+                                const isCurrentActiveMonth = selectedMonth === m;
+                                let valCurr = 0;
+                                let valPrev = 0;
+
+                                if (selectedAnomalyForDynamics.targetType === 'supply_point') {
+                                  valCurr = readings.find(r => r.supplyPointId === selectedAnomalyForDynamics.targetId && r.year === selectedYear && r.month === m)?.value || 0;
+                                  valPrev = readings.find(r => r.supplyPointId === selectedAnomalyForDynamics.targetId && r.year === selectedYear - 1 && r.month === m)?.value || 0;
+                                } else {
+                                  valCurr = lossReadings.find(r => r.lossObjectId === selectedAnomalyForDynamics.targetId && r.year === selectedYear && r.month === m)?.value || 0;
+                                  valPrev = lossReadings.find(r => r.lossObjectId === selectedAnomalyForDynamics.targetId && r.year === selectedYear - 1 && r.month === m)?.value || 0;
+                                }
+
+                                return (
+                                  <tr key={m} className={`hover:bg-slate-900/10 ${isCurrentActiveMonth ? 'bg-blue-500/10 font-semibold text-blue-300' : ''}`}>
+                                    <td className="py-1 text-[11px]">{RUSSIAN_MONTHS[m - 1]}</td>
+                                    <td className="py-1 text-right">
+                                      <input
+                                        type="number"
+                                        defaultValue={valPrev || ''}
+                                        onBlur={(e) => {
+                                          const v = Number(e.target.value);
+                                          if (selectedAnomalyForDynamics.targetType === 'supply_point') {
+                                            let updatedRds = [...readings];
+                                            const idx = updatedRds.findIndex(r => r.supplyPointId === selectedAnomalyForDynamics.targetId && r.year === selectedYear - 1 && r.month === m);
+                                            if (idx > -1) {
+                                              updatedRds[idx] = { ...updatedRds[idx], value: v };
+                                            } else {
+                                              updatedRds.push({ supplyPointId: selectedAnomalyForDynamics.targetId, year: selectedYear - 1, month: m, value: v });
+                                            }
+                                            syncDatabase(stations, supplyPoints, categories, updatedRds, lossObjects, lossReadings);
+                                          } else {
+                                            let updatedLossRds = [...lossReadings];
+                                            const idx = updatedLossRds.findIndex(r => r.lossObjectId === selectedAnomalyForDynamics.targetId && r.year === selectedYear - 1 && r.month === m);
+                                            if (idx > -1) {
+                                              updatedLossRds[idx] = { ...updatedLossRds[idx], value: v };
+                                            } else {
+                                              updatedLossRds.push({ lossObjectId: selectedAnomalyForDynamics.targetId, year: selectedYear - 1, month: m, value: v });
+                                            }
+                                            syncDatabase(stations, supplyPoints, categories, readings, lossObjects, updatedLossRds);
+                                          }
+                                        }}
+                                        className={`w-16 text-right px-1.5 py-0.5 text-[11px] rounded outline-none border font-mono ${darkTheme ? 'bg-slate-950 border-slate-800 text-white focus:border-blue-500' : 'bg-white border-slate-300 focus:border-blue-500'}`}
+                                      />
+                                    </td>
+                                    <td className="py-1 text-right">
+                                      <input
+                                        type="number"
+                                        defaultValue={valCurr || ''}
+                                        onBlur={(e) => {
+                                          const v = Number(e.target.value);
+                                          if (selectedAnomalyForDynamics.targetType === 'supply_point') {
+                                            let updatedRds = [...readings];
+                                            const idx = updatedRds.findIndex(r => r.supplyPointId === selectedAnomalyForDynamics.targetId && r.year === selectedYear && r.month === m);
+                                            if (idx > -1) {
+                                              updatedRds[idx] = { ...updatedRds[idx], value: v };
+                                            } else {
+                                              updatedRds.push({ supplyPointId: selectedAnomalyForDynamics.targetId, year: selectedYear, month: m, value: v });
+                                            }
+                                            syncDatabase(stations, supplyPoints, categories, updatedRds, lossObjects, lossReadings);
+                                          } else {
+                                            let updatedLossRds = [...lossReadings];
+                                            const idx = updatedLossRds.findIndex(r => r.lossObjectId === selectedAnomalyForDynamics.targetId && r.year === selectedYear && r.month === m);
+                                            if (idx > -1) {
+                                              updatedLossRds[idx] = { ...updatedLossRds[idx], value: v };
+                                            } else {
+                                              updatedLossRds.push({ lossObjectId: selectedAnomalyForDynamics.targetId, year: selectedYear, month: m, value: v });
+                                            }
+                                            syncDatabase(stations, supplyPoints, categories, readings, lossObjects, updatedLossRds);
+                                          }
+                                        }}
+                                        className={`w-16 text-right px-1.5 py-0.5 text-[11px] rounded outline-none border font-mono ${darkTheme ? 'bg-slate-950 border-slate-800 text-white focus:border-blue-500' : 'bg-white border-slate-300 focus:border-blue-500'}`}
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Controls / Filters */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 my-4">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      placeholder="Поиск по объекту или описанию..."
+                      value={anomalySearchQuery}
+                      onChange={(e) => setAnomalySearchQuery(e.target.value)}
+                      className={`w-full text-xs pl-9 pr-3 py-2.5 border outline-none rounded-lg font-medium ${
+                        darkTheme ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-300 text-slate-800'
+                      }`}
+                    />
+                  </div>
+
+                  <div>
+                    <select
+                      value={anomalyTypeFilter}
+                      onChange={(e) => setAnomalyTypeFilter(e.target.value as any)}
+                      className={`w-full text-xs px-3 py-2.5 border outline-none rounded-lg font-bold ${
+                        darkTheme ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-300 text-slate-800'
+                      }`}
+                    >
+                      <option value="all">⚡ Все типы объектов</option>
+                      <option value="station">🚉 Станции</option>
+                      <option value="supply_point">🔌 Точки поставки (ТП)</option>
+                      <option value="loss">📉 Технологические потери</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <select
+                      value={anomalySeverityFilter}
+                      onChange={(e) => setAnomalySeverityFilter(e.target.value as any)}
+                      className={`w-full text-xs px-3 py-2.5 border outline-none rounded-lg font-bold ${
+                        darkTheme ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-300 text-slate-800'
+                      }`}
+                    >
+                      <option value="all">🔥 Все уровни критичности</option>
+                      <option value="high">🔴 Высокая критичность</option>
+                      <option value="medium">🟡 Средняя критичность</option>
+                      <option value="low">🟢 Низкая критичность</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* List */}
+                <div className="flex-1 overflow-y-auto min-h-[300px] max-h-[50vh] pr-1 space-y-3">
+                  {(() => {
+                    const filteredAnoms = currentAnomalies.filter(anom => {
+                      if (anomalySearchQuery) {
+                        const q = anomalySearchQuery.toLowerCase();
+                        const matchName = anom.targetName.toLowerCase().includes(q);
+                        const matchDesc = anom.description.toLowerCase().includes(q);
+                        const matchMetric = anom.metric.toLowerCase().includes(q);
+                        if (!matchName && !matchDesc && !matchMetric) return false;
+                      }
+                      if (anomalySeverityFilter !== 'all' && anom.severity !== anomalySeverityFilter) return false;
+                      if (anomalyTypeFilter !== 'all' && anom.targetType !== anomalyTypeFilter) return false;
+                      return true;
+                    });
+
+                    if (filteredAnoms.length === 0) {
+                      return (
+                        <div className="text-center py-12 space-y-2">
+                          <div className="text-3xl">🕊️</div>
+                          <p className="text-sm font-bold text-slate-400">Аномалий с выбранными фильтрами не обнаружено</p>
+                          <p className="text-xs text-slate-500">Попробуйте сбросить фильтры поиска или выбрать другой период.</p>
+                        </div>
+                      );
+                    }
+
+                    return filteredAnoms.map(anom => {
+                      const getSeverityBadge = (sev: string) => {
+                        if (sev === 'high') {
+                          return <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/25">Высокая 🔴</span>;
+                        }
+                        if (sev === 'medium') {
+                          return <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/25">Средняя 🟡</span>;
+                        }
+                        return <span className="text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-450 border border-emerald-500/25">Низкая 🟢</span>;
+                      };
+
+                      const getTargetLabel = (type: string) => {
+                        if (type === 'station') return 'Железнодорожная станция';
+                        if (type === 'supply_point') return 'Точка ТП';
+                        return 'Объект потерь сети';
+                      };
+
+                      return (
+                        <div 
+                          key={anom.id}
+                          onClick={() => {
+                            setSelectedAnomalyForDynamics(anom);
+                          }}
+                          className={`p-4 rounded-xl border cursor-pointer transition-all duration-150 active:scale-[0.99] group ${
+                            darkTheme 
+                              ? 'bg-slate-950/45 border-slate-800 hover:border-blue-500 hover:bg-slate-900/60' 
+                              : 'bg-slate-50 border-slate-200 hover:border-blue-400 hover:bg-white'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[9px] font-extrabold text-slate-450 uppercase tracking-widest">{getTargetLabel(anom.targetType)}</span>
+                                {getSeverityBadge(anom.severity)}
+                              </div>
+                              <h4 className={`text-sm font-extrabold tracking-tight ${darkTheme ? 'text-white' : 'text-slate-900'} group-hover:text-blue-500 transition-colors`}>
+                                {anom.targetName}
+                              </h4>
+                              <p className="text-xs text-slate-400 leading-relaxed max-w-xl">{anom.description}</p>
+                            </div>
+                            <div className="shrink-0 flex sm:flex-col items-end gap-1.5 justify-between">
+                              <span className="text-xs font-mono font-bold px-3 py-1 bg-red-500/10 text-rose-400 border border-red-500/20 rounded-lg">
+                                {anom.metric}
+                              </span>
+                              <span className="text-[9px] font-bold text-blue-500 group-hover:underline flex items-center gap-0.5">
+                                Смотреть динамику / Править →
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </>
+            )}
 
             {/* Footer */}
             <div className="flex justify-between items-center border-t border-slate-800/50 pt-4 mt-4 text-xs font-semibold text-slate-450">
@@ -6233,6 +7308,7 @@ export default function App() {
                   setAnomalySearchQuery('');
                   setAnomalySeverityFilter('all');
                   setAnomalyTypeFilter('all');
+                  setSelectedAnomalyForDynamics(null);
                 }}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-colors"
               >
