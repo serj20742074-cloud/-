@@ -121,7 +121,7 @@ export default function App() {
   const [selectedSupplyPointId, setSelectedSupplyPointId] = useState<string | null>(null);
   const [selectedReportStationId, setSelectedReportStationId] = useState<string | null>(null);
   const [selectedReportSupplyPointId, setSelectedReportSupplyPointId] = useState<string | null>(null);
-  const [reportSubTab, setReportSubTab] = useState<'stations' | 'categories' | 'accounting_methods' | 'losses' | 'slides_presentation'>('stations');
+  const [reportSubTab, setReportSubTab] = useState<'stations' | 'categories' | 'accounting_methods' | 'losses' | 'slides_presentation' | 'detailed_analysis'>('stations');
   const [reportCalculationMethodFilter, setReportCalculationMethodFilter] = useState<'all' | 'meter' | 'estimated'>('all');
   const [selectedReportCategoryId, setSelectedReportCategoryId] = useState<string | null>(null);
   const [categoryCalculationMethodFilter, setCategoryCalculationMethodFilter] = useState<'all' | 'meter' | 'estimated'>('all');
@@ -137,6 +137,7 @@ export default function App() {
   const [categoryCriticismOnly, setCategoryCriticismOnly] = useState<boolean>(false);
   const [expandedCatStations, setExpandedCatStations] = useState<Record<string, boolean>>({});
   const [expandedCatPoints, setExpandedCatPoints] = useState<Record<string, boolean>>({});
+  const [expandedDetailedStations, setExpandedDetailedStations] = useState<Record<string, boolean>>({});
 
   // Interactive Graph variables
   const [visibleYears, setVisibleYears] = useState<{ [key: number]: boolean }>({ 2025: true, 2026: true });
@@ -967,6 +968,461 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  // --- EXPORT DETAILED CONSOLIDATED REPORT TO WORD (.DOC) ---
+  const exportDetailedReportToDoc = () => {
+    const currentPeriodLabel = selectedPeriodName;
+    const reportTitle = "ПОДРОБНЫЙ СВОДНЫЙ АНАЛИЗ ЭНЕРГОПОТРЕБЛЕНИЯ РЕГИОНА";
+    const reportSubtitle = `Учетный период: ${currentPeriodLabel} ${selectedYear} года (в сопоставлении с прошлым годом и накопительным итогом с начала года)`;
+
+    // 1. Calculate overall totals
+    const activePtIds = supplyPoints.filter(p => p.isActive).map(p => p.id);
+    const totalCurrent = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+    const totalPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+    const totalDiff = totalCurrent - totalPrev;
+    const totalPct = totalPrev > 0 ? (totalDiff / totalPrev) * 100 : 0;
+
+    // YTD months list from 1 to selectedMonth
+    const ytdMonthsList = Array.from({ length: selectedMonth }, (_, i) => i + 1);
+    const totalCurrentYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+    const totalPrevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+    const totalYtdDiff = totalCurrentYtd - totalPrevYtd;
+    const totalYtdPct = totalPrevYtd > 0 ? (totalYtdDiff / totalPrevYtd) * 100 : 0;
+
+    // 2. Category breakdown
+    const categoryAnalysis = categories.map(cat => {
+      const catPoints = supplyPoints.filter(p => p.category === cat && p.isActive);
+      const catPtIds = catPoints.map(p => p.id);
+      
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const diff = curr - prev;
+      const pct = prev > 0 ? (diff / prev) * 100 : 0;
+
+      const currYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const diffYtd = currYtd - prevYtd;
+      const pctYtd = prevYtd > 0 ? (diffYtd / prevYtd) * 100 : 0;
+
+      return {
+        category: cat,
+        pointsCount: catPoints.length,
+        curr, prev, diff, pct,
+        currYtd, prevYtd, diffYtd, pctYtd
+      };
+    });
+
+    // 3. Calculation Method breakdown
+    const methods = [
+      { id: 'meter', name: 'Приборы учета', filter: (p: any) => p.calculationMethod !== 'estimated' },
+      { id: 'estimated', name: 'Расчетный способ (уст. мощность)', filter: (p: any) => p.calculationMethod === 'estimated' }
+    ];
+
+    const methodAnalysis = methods.map(m => {
+      const mPoints = supplyPoints.filter(p => p.isActive && m.filter(p));
+      const mPtIds = mPoints.map(p => p.id);
+
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && mPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && mPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const diff = curr - prev;
+      const pct = prev > 0 ? (diff / prev) * 100 : 0;
+
+      const currYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && mPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && mPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const diffYtd = currYtd - prevYtd;
+      const pctYtd = prevYtd > 0 ? (diffYtd / prevYtd) * 100 : 0;
+
+      return {
+        name: m.name,
+        pointsCount: mPoints.length,
+        curr, prev, diff, pct,
+        currYtd, prevYtd, diffYtd, pctYtd
+      };
+    });
+
+    // 4. Station Profile Breakdown
+    const stationAnalysis = stations.map(st => {
+      const stPoints = supplyPoints.filter(p => p.stationId === st.id && p.isActive);
+      const stPtIds = stPoints.map(p => p.id);
+
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const diff = curr - prev;
+      const pct = prev > 0 ? (diff / prev) * 100 : 0;
+
+      const currYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const diffYtd = currYtd - prevYtd;
+      const pctYtd = prevYtd > 0 ? (diffYtd / prevYtd) * 100 : 0;
+
+      // Group by category inside this station
+      const stCatBreakdown = categories.map(cat => {
+        const catPoints = stPoints.filter(p => p.category === cat);
+        const catPtIds = catPoints.map(p => p.id);
+        const catCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+        const catPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+        const catDiff = catCurr - catPrev;
+        const catPct = catPrev > 0 ? (catDiff / catPrev) * 100 : 0;
+        return { category: cat, curr: catCurr, prev: catPrev, diff: catDiff, pct: catPct };
+      }).filter(cb => cb.curr > 0 || cb.prev > 0);
+
+      // Detail list of points inside this station
+      const stPointsDetails = stPoints.map(p => {
+        const ptCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((s, r) => s + r.value, 0);
+        const ptPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((s, r) => s + r.value, 0);
+        const ptDiff = ptCurr - ptPrev;
+        const ptPct = ptPrev > 0 ? (ptDiff / ptPrev) * 100 : 0;
+
+        const ptCurrYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((s, r) => s + r.value, 0);
+        const ptPrevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((s, r) => s + r.value, 0);
+        const ptDiffYtd = ptCurrYtd - ptPrevYtd;
+        const ptPctYtd = ptPrevYtd > 0 ? (ptDiffYtd / ptPrevYtd) * 100 : 0;
+
+        return {
+          point: p,
+          curr: ptCurr,
+          prev: ptPrev,
+          diff: ptDiff,
+          pct: ptPct,
+          currYtd: ptCurrYtd,
+          prevYtd: ptPrevYtd,
+          diffYtd: ptDiffYtd,
+          pctYtd: ptPctYtd
+        };
+      });
+
+      return {
+        station: st,
+        curr, prev, diff, pct,
+        currYtd, prevYtd, diffYtd, pctYtd,
+        categories: stCatBreakdown,
+        points: stPointsDetails
+      };
+    });
+
+    const htmlDocContent = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <title>Подробный сводный энергетический анализ</title>
+        <style>
+          body {
+            font-family: 'Arial', sans-serif;
+            font-size: 10.5pt;
+            line-height: 1.4;
+            color: #333333;
+          }
+          .header-box {
+            text-align: center;
+            border-bottom: 3px double #1e3a8a;
+            padding-bottom: 12px;
+            margin-bottom: 25px;
+          }
+          .title {
+            font-size: 16pt;
+            font-weight: bold;
+            color: #1e3a8a;
+            text-transform: uppercase;
+          }
+          .subtitle {
+            font-size: 10pt;
+            color: #475569;
+            margin-top: 4px;
+          }
+          .period-subtitle {
+            font-size: 10.5pt;
+            font-weight: bold;
+            color: #1e40af;
+            margin-top: 6px;
+          }
+          h2 {
+            font-size: 13pt;
+            font-weight: bold;
+            color: #1e3a8a;
+            border-bottom: 1.5px solid #1e3a8a;
+            padding-bottom: 3px;
+            margin-top: 25px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+          }
+          h3 {
+            font-size: 11.5pt;
+            font-weight: bold;
+            color: #0f172a;
+            margin-top: 18px;
+            margin-bottom: 8px;
+            border-left: 4px solid #3b82f6;
+            padding-left: 8px;
+          }
+          p {
+            text-align: justify;
+            margin-bottom: 10px;
+            text-indent: 1cm;
+          }
+          .summary-card {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-left: 5px solid #2563eb;
+            padding: 12px;
+            margin-bottom: 20px;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 18px;
+            font-size: 9pt;
+          }
+          th {
+            background-color: #1e3a8a;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 6px 8px;
+            border: 1px solid #cbd5e1;
+            text-align: left;
+          }
+          td {
+            padding: 5px 8px;
+            border: 1px solid #cbd5e1;
+          }
+          .bg-gray {
+            background-color: #f1f5f9;
+          }
+          .text-right {
+            text-align: right;
+          }
+          .text-center {
+            text-align: center;
+          }
+          .bold {
+            font-weight: bold;
+          }
+          .saving {
+            color: #16a34a;
+            font-weight: bold;
+          }
+          .overrun {
+            color: #dc2626;
+            font-weight: bold;
+          }
+          .neutral {
+            color: #475569;
+          }
+          .station-header {
+            background-color: #f1f5f9;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-left: 4px solid #1e3a8a;
+            margin-top: 20px;
+            margin-bottom: 10px;
+          }
+          .footer-box {
+            margin-top: 35px;
+            font-size: 8.5pt;
+            color: #64748b;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-box">
+          <div class="title">${reportTitle}</div>
+          <div class="subtitle">Информационно-аналитический комплекс ОАО "РЖД" • Система умного учета электроэнергии</div>
+          <div class="period-subtitle">${reportSubtitle}</div>
+        </div>
+
+        <div class="summary-card">
+          <strong style="color: #1e3a8a;">ОБЩИЙ ИТОГ ПО РЕГИОНУ:</strong><br/>
+          • Потребление за выбранный период: <strong>${totalCurrent.toLocaleString()} кВт·ч</strong> (прошлый год: ${totalPrev.toLocaleString()} кВт·ч, 
+          динамика: <span class="${totalDiff > 0 ? 'overrun' : 'saving'}">${totalDiff > 0 ? `+${totalDiff.toLocaleString()}` : totalDiff.toLocaleString()} кВт·ч (${totalPrev > 0 ? (totalDiff > 0 ? '+' : '') + totalPct.toFixed(2) : '0'}%)</span>).<br/>
+          • Накопительный итог с начала года (YTD): <strong>${totalCurrentYtd.toLocaleString()} кВт·ч</strong> (прошлый год YTD: ${totalPrevYtd.toLocaleString()} кВт·ч, 
+          динамика YTD: <span class="${totalYtdDiff > 0 ? 'overrun' : 'saving'}">${totalYtdDiff > 0 ? `+${totalYtdDiff.toLocaleString()}` : totalYtdDiff.toLocaleString()} кВт·ч (${totalPrevYtd > 0 ? (totalYtdDiff > 0 ? '+' : '') + totalYtdPct.toFixed(2) : '0'}%)</span>).<br/>
+          • Общее состояние энергоэффективности: <strong style="color: ${totalDiff > 0 ? '#dc2626' : '#16a34a'}">${totalDiff > 0 ? 'ЗАФИКСИРОВАН ПЕРЕРАСХОД РЕСУРСОВ' : 'ДОСТИГНУТА СТАБИЛЬНАЯ ЭКОНОМИЯ'}</strong>.
+        </div>
+
+        <h2>РАЗДЕЛ 1. АНАЛИЗ ПО ТЕХНОЛОГИЧЕСКИМ КАТЕГОРИЯМ ПОТРЕБИТЕЛЕЙ</h2>
+        <p>Ниже представлена сводная ведомость потребления электроэнергии в разрезе основных категорий технологических нужд за отчетный период и с начала года (YTD) в сравнении с прошлым годом:</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">Технологическая категория</th>
+              <th rowspan="2" class="text-center">Кол-во ТП</th>
+              <th colspan="3" class="text-center">За отчетный период (кВт·ч)</th>
+              <th colspan="3" class="text-center">С начала года (YTD) (кВт·ч)</th>
+            </tr>
+            <tr>
+              <th class="text-right">Текущий</th>
+              <th class="text-right">Прошлый г.</th>
+              <th class="text-right">Изменение (%)</th>
+              <th class="text-right">Текущий YTD</th>
+              <th class="text-right">Прошлый YTD</th>
+              <th class="text-right">Изменение YTD (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${categoryAnalysis.map(c => {
+              const diffPctText = c.prev > 0 ? `${c.diff > 0 ? '+' : ''}${c.pct.toFixed(1)}%` : '0%';
+              const diffYtdPctText = c.prevYtd > 0 ? `${c.diffYtd > 0 ? '+' : ''}${c.pctYtd.toFixed(1)}%` : '0%';
+              return `
+                <tr>
+                  <td class="bold">${c.category}</td>
+                  <td class="text-center font-mono">${c.pointsCount}</td>
+                  <td class="text-right font-mono">${c.curr.toLocaleString()}</td>
+                  <td class="text-right font-mono text-gray">${c.prev.toLocaleString()}</td>
+                  <td class="text-right font-mono ${c.diff > 0 ? 'overrun' : c.diff < 0 ? 'saving' : 'neutral'}">${c.diff > 0 ? `+${c.diff.toLocaleString()}` : c.diff.toLocaleString()} (${diffPctText})</td>
+                  <td class="text-right font-mono">${c.currYtd.toLocaleString()}</td>
+                  <td class="text-right font-mono text-gray">${c.prevYtd.toLocaleString()}</td>
+                  <td class="text-right font-mono ${c.diffYtd > 0 ? 'overrun' : c.diffYtd < 0 ? 'saving' : 'neutral'}">${c.diffYtd > 0 ? `+${c.diffYtd.toLocaleString()}` : c.diffYtd.toLocaleString()} (${diffYtdPctText})</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+
+        <h2>РАЗДЕЛ 2. АНАЛИЗ ПО СПОСОБАМ РАСЧЕТА РАСХОДА</h2>
+        <p>Сопоставление потребления, рассчитанного по показаниям коммерческих приборов учета (прямое измерение) и по расчетному способу (по установленной мощности оборудования в отсутствие ПУ):</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">Способ расчета расхода</th>
+              <th rowspan="2" class="text-center">Кол-во ТП</th>
+              <th colspan="3" class="text-center">За отчетный период (кВт·ч)</th>
+              <th colspan="3" class="text-center">С начала года (YTD) (кВт·ч)</th>
+            </tr>
+            <tr>
+              <th class="text-right">Текущий</th>
+              <th class="text-right">Прошлый г.</th>
+              <th class="text-right">Изменение (%)</th>
+              <th class="text-right">Текущий YTD</th>
+              <th class="text-right">Прошлый YTD</th>
+              <th class="text-right">Изменение YTD (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${methodAnalysis.map(m => {
+              const diffPctText = m.prev > 0 ? `${m.diff > 0 ? '+' : ''}${m.pct.toFixed(1)}%` : '0%';
+              const diffYtdPctText = m.prevYtd > 0 ? `${m.diffYtd > 0 ? '+' : ''}${m.pctYtd.toFixed(1)}%` : '0%';
+              return `
+                <tr>
+                  <td class="bold">${m.name}</td>
+                  <td class="text-center font-mono">${m.pointsCount}</td>
+                  <td class="text-right font-mono">${m.curr.toLocaleString()}</td>
+                  <td class="text-right font-mono text-gray">${m.prev.toLocaleString()}</td>
+                  <td class="text-right font-mono ${m.diff > 0 ? 'overrun' : m.diff < 0 ? 'saving' : 'neutral'}">${m.diff > 0 ? `+${m.diff.toLocaleString()}` : m.diff.toLocaleString()} (${diffPctText})</td>
+                  <td class="text-right font-mono">${m.currYtd.toLocaleString()}</td>
+                  <td class="text-right font-mono text-gray">${m.prevYtd.toLocaleString()}</td>
+                  <td class="text-right font-mono ${m.diffYtd > 0 ? 'overrun' : m.diffYtd < 0 ? 'saving' : 'neutral'}">${m.diffYtd > 0 ? `+${m.diffYtd.toLocaleString()}` : m.diffYtd.toLocaleString()} (${diffYtdPctText})</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+
+        <h2>РАЗДЕЛ 3. ДЕТАЛЬНЫЙ ЭНЕРГОАУДИТ В РАЗРЕЗЕ СТАНЦИЙ И ТОЧЕК ПОСТАВКИ</h2>
+        <p>Подробный аудит каждой железнодорожной станции с распределением по технологическим категориям и отдельным точкам поставки с динамикой накопительного итога:</p>
+
+        ${stationAnalysis.map(sa => {
+          const stDiffPctText = sa.prev > 0 ? `${sa.diff > 0 ? '+' : ''}${sa.pct.toFixed(1)}%` : '0%';
+          const stDiffYtdPctText = sa.prevYtd > 0 ? `${sa.diffYtd > 0 ? '+' : ''}${sa.pctYtd.toFixed(1)}%` : '0%';
+          
+          return `
+            <div class="station-header">
+              <strong style="font-size: 11pt; color: #1e3a8a;">ЖД СТАНЦИЯ: ${sa.station.name} (${sa.station.section})</strong><br/>
+              • Расход за период: <strong>${sa.curr.toLocaleString()} кВт·ч</strong> (предыдущий год: ${sa.prev.toLocaleString()} кВт·ч, динамика: <span class="${sa.diff > 0 ? 'overrun' : 'saving'}">${sa.diff > 0 ? '+' : ''}${sa.diff.toLocaleString()} кВт·ч (${stDiffPctText})</span>)<br/>
+              • Накопительно с начала года (YTD): <strong>${sa.currYtd.toLocaleString()} кВт·ч</strong> (прошлый YTD: ${sa.prevYtd.toLocaleString()} кВт·ч, динамика YTD: <span class="${sa.diffYtd > 0 ? 'overrun' : 'saving'}">${sa.diffYtd > 0 ? '+' : ''}${sa.diffYtd.toLocaleString()} кВт·ч (${stDiffYtdPctText})</span>)
+            </div>
+
+            <p style="font-size: 9.5pt; margin-bottom: 5px;"><strong>Свод по категориям на станции:</strong></p>
+            <table style="margin-bottom: 12px; font-size: 8.5pt;">
+              <thead>
+                <tr style="background-color: #475569;">
+                  <th>Технологическая категория</th>
+                  <th class="text-right">Потребление за период (кВт·ч)</th>
+                  <th class="text-right">Прошлый год (кВт·ч)</th>
+                  <th class="text-right">Изменение (кВт·ч)</th>
+                  <th class="text-right">Динамика (%)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sa.categories.map(c => `
+                  <tr>
+                    <td>${c.category}</td>
+                    <td class="text-right font-mono">${c.curr.toLocaleString()}</td>
+                    <td class="text-right font-mono text-gray">${c.prev.toLocaleString()}</td>
+                    <td class="text-right font-mono ${c.diff > 0 ? 'overrun' : 'saving'}">${c.diff > 0 ? '+' : ''}${c.diff.toLocaleString()}</td>
+                    <td class="text-right font-mono ${c.diff > 0 ? 'overrun' : 'saving'}">${c.prev > 0 ? (c.diff > 0 ? '+' : '') + c.pct.toFixed(1) + '%' : '0%'}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+
+            <p style="font-size: 9.5pt; margin-bottom: 5px;"><strong>Спецификация по точкам поставки (ТП) станции:</strong></p>
+            <table>
+              <thead>
+                <tr style="background-color: #334155;">
+                  <th>Точка поставки (ТП)</th>
+                  <th>Категория</th>
+                  <th>Способ учета</th>
+                  <th class="text-right">Период (кВт·ч)</th>
+                  <th class="text-right">Прошлый г.</th>
+                  <th class="text-right">Начало года YTD</th>
+                  <th class="text-right">Прошлый YTD</th>
+                  <th class="text-right">Динамика YTD (кВт·ч)</th>
+                  <th class="text-right">Откл. YTD</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sa.points.map(p => {
+                  const pDiffText = p.diffYtd > 0 ? `+${p.diffYtd.toLocaleString()}` : p.diffYtd.toLocaleString();
+                  const pPctText = p.prevYtd > 0 ? `${p.diffYtd > 0 ? '+' : ''}${p.pctYtd.toFixed(1)}%` : '0%';
+                  const calcMethodLabel = p.point.calculationMethod === 'estimated' ? 'Расчетный' : 'Прибор учета';
+                  const calcColor = p.point.calculationMethod === 'estimated' ? '#d97706' : '#2563eb';
+                  
+                  return `
+                    <tr>
+                      <td class="bold">${p.point.name}</td>
+                      <td>${p.point.category}</td>
+                      <td style="color: ${calcColor}; font-weight: bold; font-size: 8pt;">${calcMethodLabel}</td>
+                      <td class="text-right font-mono">${p.curr.toLocaleString()}</td>
+                      <td class="text-right font-mono text-gray">${p.prev.toLocaleString()}</td>
+                      <td class="text-right font-mono">${p.currYtd.toLocaleString()}</td>
+                      <td class="text-right font-mono text-gray">${p.prevYtd.toLocaleString()}</td>
+                      <td class="text-right font-mono ${p.diffYtd > 0 ? 'overrun' : p.diffYtd < 0 ? 'saving' : 'neutral'}"><strong>${pDiffText}</strong></td>
+                      <td class="text-right font-mono ${p.diffYtd > 0 ? 'overrun' : p.diffYtd < 0 ? 'saving' : 'neutral'}">${pPctText}</td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+            <div style="height: 10px;"></div>
+          `;
+        }).join("")}
+
+        <div class="footer-box">
+          Детальный консолидированный аналитический отчет сгенерирован автоматически.<br/>
+          Дата формирования: ${new Date().toLocaleDateString("ru-RU")} | ЭЦП оператора: serj20742074@gmail.com | ОАО "РЖД" Информационные Технологии
+        </div>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(["\ufeff" + htmlDocContent], {
+      type: "application/msword;charset=utf-8"
+    });
+
+    const url = URL.createObjectURL(blob);
+    const downloadLink = document.createElement("a");
+    downloadLink.href = url;
+    downloadLink.download = `Подробный_анализ_энергоэффективности_${selectedMonth.toString().padStart(2, '0')}_${selectedYear}.doc`;
+    
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+    URL.revokeObjectURL(url);
+  };
+
   // --- EXPORT TO POWERPOINT (.PPTX) ---
   const exportReportToPptx = () => {
     const currentMonthLabel = selectedPeriodName;
@@ -1388,6 +1844,24 @@ export default function App() {
         syncDatabase(stations, updatedSps, categories, updatedRds, lossObjects, lossReadings);
         setDeleteConfirm(null);
       }
+    });
+  };
+
+  const handleEditPointFromDetailed = (point: SupplyPoint) => {
+    const currVal = readings.find(r => r.supplyPointId === point.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
+    const prevVal = readings.find(r => r.supplyPointId === point.id && r.year === (selectedYear - 1) && r.month === selectedMonth)?.value || 0;
+    setPointModal({
+      isOpen: true,
+      mode: 'edit',
+      id: point.id,
+      name: point.name,
+      stationId: point.stationId,
+      category: point.category,
+      note: point.note || '',
+      isActive: point.isActive,
+      calculationMethod: point.calculationMethod || 'meter',
+      currKwh: currVal,
+      prevKwh: prevVal
     });
   };
 
@@ -4069,14 +4543,25 @@ export default function App() {
                       <Presentation className="w-3.5 h-3.5 text-amber-500" strokeWidth={2.5} />
                       Слайд-презентация
                     </button>
+                    <button
+                      onClick={() => setReportSubTab('detailed_analysis')}
+                      className={`px-3 py-1 text-xs font-bold rounded-md flex items-center gap-1.5 transition-all duration-150 ${
+                        reportSubTab === 'detailed_analysis'
+                          ? 'bg-blue-600 text-white shadow'
+                          : `${darkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`
+                      }`}
+                    >
+                      <TrendingUp className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+                      Подробный анализ
+                    </button>
                   </div>
 
                   <button
-                    onClick={exportReportToDoc}
+                    onClick={reportSubTab === 'detailed_analysis' ? exportDetailedReportToDoc : exportReportToDoc}
                     className="bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 text-xs text-white rounded font-bold transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-sm hover:shadow"
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>Скачать отчет Word (.doc)</span>
+                    <span>{reportSubTab === 'detailed_analysis' ? 'Скачать сводный подробный отчет (.doc)' : 'Скачать отчет Word (.doc)'}</span>
                   </button>
 
                   <button
@@ -6420,6 +6905,386 @@ export default function App() {
 
                     </div>
                   </div>
+                </div>
+              )}
+
+              {reportSubTab === 'detailed_analysis' && (
+                <div className="space-y-6 animate-fadeIn">
+                  {/* Executive summary block */}
+                  <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-800/40 border-slate-700' : 'bg-white border-slate-200'} shadow-sm`}>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-start gap-4">
+                        <div className="p-3 bg-indigo-500/10 text-indigo-500 rounded-lg shrink-0">
+                          <Activity className="w-6 h-6 animate-pulse text-indigo-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className={`text-sm font-bold ${darkTheme ? 'text-white' : 'text-slate-800'}`}>Подробный сводный анализ энергоэффективности региона</h4>
+                          <p className="text-xs text-slate-400">
+                            Полное иерархическое дерево: Регион → Станции → Категории → Точки поставки. 
+                            Включает накопительные итоги с начала года (YTD), сравнение способов учета и прямое редактирование показателей.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={exportDetailedReportToDoc}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-xs px-4 py-2.5 rounded-lg text-white font-bold transition-all flex items-center gap-2 cursor-pointer shadow-lg self-start md:self-center shrink-0 border-none outline-none"
+                      >
+                        <FileText className="w-4 h-4" />
+                        Сформировать сводный отчет Word (.DOC)
+                      </button>
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const activePtIds = supplyPoints.filter(p => p.isActive).map(p => p.id);
+                    const totalCurrent = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                    const totalPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                    const totalDiff = totalCurrent - totalPrev;
+                    const totalPct = totalPrev > 0 ? (totalDiff / totalPrev) * 100 : 0;
+
+                    const ytdMonthsList = Array.from({ length: selectedMonth }, (_, i) => i + 1);
+                    const totalCurrentYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                    const totalPrevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                    const totalYtdDiff = totalCurrentYtd - totalPrevYtd;
+                    const totalYtdPct = totalPrevYtd > 0 ? (totalYtdDiff / totalPrevYtd) * 100 : 0;
+
+                    // Calculation methods
+                    const meterPoints = supplyPoints.filter(p => p.isActive && p.calculationMethod !== 'estimated');
+                    const estimatedPoints = supplyPoints.filter(p => p.isActive && p.calculationMethod === 'estimated');
+
+                    const meterCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && meterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const meterPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && meterPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const meterDiff = meterCurr - meterPrev;
+                    const meterPct = meterPrev > 0 ? (meterDiff / meterPrev) * 100 : 0;
+
+                    const estCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && estimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const estPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && estimatedPoints.map(p => p.id).includes(r.supplyPointId)).reduce((sum, r) => sum + r.value, 0);
+                    const estDiff = estCurr - estPrev;
+                    const estPct = estPrev > 0 ? (estDiff / estPrev) * 100 : 0;
+
+                    const totalKwh = meterCurr + estCurr;
+                    const meterRatio = totalKwh > 0 ? (meterCurr / totalKwh) * 100 : 0;
+
+                    return (
+                      <>
+                        {/* Overall KPIs */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                          {/* KPI 1: Текущий период */}
+                          <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-800/30 border-slate-700/80' : 'bg-white border-slate-200'} shadow-sm flex flex-col justify-between h-[130px]`}>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Текущий период ({selectedPeriodName})</span>
+                            <div className="mt-2 flex items-baseline gap-1.5">
+                              <span className="text-xl font-extrabold font-mono">{totalCurrent.toLocaleString()}</span>
+                              <span className="text-[10px] text-slate-500 font-bold">кВт·ч</span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between text-xs">
+                              <span className="text-slate-400">г/г:</span>
+                              {totalDiff > 0 ? (
+                                <span className="text-rose-500 font-bold flex items-center gap-0.5"><TrendingUp className="w-3.5 h-3.5" /> +{totalDiff.toLocaleString()} (+{totalPct.toFixed(1)}%)</span>
+                              ) : (
+                                <span className="text-emerald-500 font-bold flex items-center gap-0.5"><TrendingDown className="w-3.5 h-3.5" /> {totalDiff.toLocaleString()} ({totalPct.toFixed(1)}%)</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* KPI 2: Накопительно YTD */}
+                          <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-800/30 border-slate-700/80' : 'bg-white border-slate-200'} shadow-sm flex flex-col justify-between h-[130px]`}>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">С начала года (YTD накопительный)</span>
+                            <div className="mt-2 flex items-baseline gap-1.5">
+                              <span className="text-xl font-extrabold font-mono">{totalCurrentYtd.toLocaleString()}</span>
+                              <span className="text-[10px] text-slate-500 font-bold">кВт·ч</span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between text-xs">
+                              <span className="text-slate-400">YTD динамика г/г:</span>
+                              {totalYtdDiff > 0 ? (
+                                <span className="text-rose-500 font-bold flex items-center gap-0.5"><TrendingUp className="w-3.5 h-3.5" /> +{totalYtdDiff.toLocaleString()} (+{totalYtdPct.toFixed(1)}%)</span>
+                              ) : (
+                                <span className="text-emerald-500 font-bold flex items-center gap-0.5"><TrendingDown className="w-3.5 h-3.5" /> {totalYtdDiff.toLocaleString()} ({totalYtdPct.toFixed(1)}%)</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* KPI 3: Качество учета */}
+                          <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-800/30 border-slate-700/80' : 'bg-white border-slate-200'} shadow-sm flex flex-col justify-between h-[130px]`}>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Индекс коммерческого приборного учета</span>
+                            <div className="mt-2">
+                              <div className="flex items-center justify-between text-xs font-bold mb-1">
+                                <span>Доля ПУ: {meterRatio.toFixed(1)}%</span>
+                                <span className={meterRatio >= 90 ? 'text-emerald-500' : 'text-amber-500'}>
+                                  {meterRatio >= 90 ? 'Отлично' : 'Требуется модернизация'}
+                                </span>
+                              </div>
+                              <div className={`w-full h-2 rounded-full overflow-hidden ${darkTheme ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                                <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${meterRatio}%` }} />
+                              </div>
+                            </div>
+                            <span className="text-[9px] text-slate-500">Доля расчетных потерь: {(100 - meterRatio).toFixed(1)}%</span>
+                          </div>
+                        </div>
+
+                        {/* Calculation Methods grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className="flex items-center justify-between mb-3 border-b border-slate-800/50 pb-2">
+                              <h5 className="text-xs font-bold uppercase tracking-wider text-blue-400">📊 ПО ПРИБОРАМ УЧЕТА (ПУ)</h5>
+                              <span className="text-[10px] text-slate-400">Активных точек: {meterPoints.length}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                              <div>
+                                <span className="text-[10px] block text-slate-500 uppercase font-sans">Текущий расход</span>
+                                <strong className="text-sm text-slate-200">{meterCurr.toLocaleString()} кВт·ч</strong>
+                              </div>
+                              <div>
+                                <span className="text-[10px] block text-slate-500 uppercase font-sans">Динамика г/г</span>
+                                <strong className={meterDiff > 0 ? 'text-rose-500 text-sm' : 'text-emerald-500 text-sm'}>
+                                  {meterDiff > 0 ? `+${meterDiff.toLocaleString()}` : meterDiff.toLocaleString()} ({meterPct.toFixed(1)}%)
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className="flex items-center justify-between mb-3 border-b border-slate-800/50 pb-2">
+                              <h5 className="text-xs font-bold uppercase tracking-wider text-amber-500">🧮 РАСЧЕТНЫЙ СПОСОБ (УСТ. МОЩНОСТЬ)</h5>
+                              <span className="text-[10px] text-slate-400">Активных точек: {estimatedPoints.length}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                              <div>
+                                <span className="text-[10px] block text-slate-500 uppercase font-sans">Текущий расход</span>
+                                <strong className="text-sm text-slate-200">{estCurr.toLocaleString()} кВт·ч</strong>
+                              </div>
+                              <div>
+                                <span className="text-[10px] block text-slate-500 uppercase font-sans">Динамика г/г</span>
+                                <strong className={estDiff > 0 ? 'text-rose-500 text-sm' : 'text-emerald-500 text-sm'}>
+                                  {estDiff > 0 ? `+${estDiff.toLocaleString()}` : estDiff.toLocaleString()} ({estPct.toFixed(1)}%)
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Hierarchical Stations Breakdown */}
+                        <div className="space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-700/60">
+                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Иерархический список станций ({stations.length})</h3>
+                            
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  const allExp: Record<string, boolean> = {};
+                                  stations.forEach(s => allExp[s.id] = true);
+                                  setExpandedDetailedStations(allExp);
+                                }}
+                                className={`px-2.5 py-1.5 text-[10px] font-bold rounded border ${
+                                  darkTheme ? 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                                }`}
+                              >
+                                Раскрыть все станции
+                              </button>
+                              <button
+                                onClick={() => setExpandedDetailedStations({})}
+                                className={`px-2.5 py-1.5 text-[10px] font-bold rounded border ${
+                                  darkTheme ? 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                                }`}
+                              >
+                                Свернуть все
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            {stations.map(st => {
+                              const isExpanded = expandedDetailedStations[st.id];
+                              const stPoints = supplyPoints.filter(p => p.stationId === st.id && p.isActive);
+                              const stPtIds = stPoints.map(p => p.id);
+
+                              const stCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              const stPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              const stDiff = stCurr - stPrev;
+                              const stPct = stPrev > 0 ? (stDiff / stPrev) * 100 : 0;
+
+                              const stCurrYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              const stPrevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                              const stDiffYtd = stCurrYtd - stPrevYtd;
+                              const stPctYtd = stPrevYtd > 0 ? (stDiffYtd / stPrevYtd) * 100 : 0;
+
+                              return (
+                                <div 
+                                  key={st.id} 
+                                  className={`rounded-xl border transition-all ${
+                                    isExpanded 
+                                      ? (darkTheme ? 'bg-slate-900/85 border-slate-700' : 'bg-slate-50/50 border-slate-300 shadow-sm')
+                                      : (darkTheme ? 'bg-slate-900/30 border-slate-800 hover:bg-slate-900/55' : 'bg-white border-slate-200 hover:bg-slate-50')
+                                  }`}
+                                >
+                                  {/* Header card of station */}
+                                  <div 
+                                    onClick={() => setExpandedDetailedStations(prev => ({ ...prev, [st.id]: !prev[st.id] }))}
+                                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer select-none"
+                                  >
+                                    <div className="flex items-center gap-3">
+                                      <div className={`p-2 rounded-lg ${stDiff > 0 ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                        <Train className="w-5 h-5" />
+                                      </div>
+                                      <div>
+                                        <h4 className="font-extrabold text-sm">{st.name}</h4>
+                                        <p className="text-[10px] text-slate-500">Участок контроля: <span className="font-bold">{st.section}</span> • Точек: {stPoints.length}</p>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-6 text-xs font-mono">
+                                      <div>
+                                        <span className="text-[9px] block text-slate-500 uppercase font-sans">За период ({selectedPeriodName})</span>
+                                        <span className="font-bold">{stCurr.toLocaleString()} кВт·ч</span>
+                                        <span className={`inline-block ml-1.5 text-[10px] font-bold ${stDiff > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                          {stDiff > 0 ? `+${stPct.toFixed(1)}%` : `${stPct.toFixed(1)}%`}
+                                        </span>
+                                      </div>
+
+                                      <div className="border-l border-slate-800/60 pl-6">
+                                        <span className="text-[9px] block text-slate-500 uppercase font-sans">Накопительно YTD</span>
+                                        <span className="font-bold">{stCurrYtd.toLocaleString()} кВт·ч</span>
+                                        <span className={`inline-block ml-1.5 text-[10px] font-bold ${stDiffYtd > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                          {stDiffYtd > 0 ? `+${stPctYtd.toFixed(1)}%` : `${stPctYtd.toFixed(1)}%`}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center justify-center w-8 h-8 rounded-full hover:bg-slate-800/40 shrink-0 transition-colors">
+                                        <ChevronRight className={`w-5 h-5 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-blue-400' : ''}`} />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Expanded Area: Categories & Points details */}
+                                  {isExpanded && (
+                                    <div className={`p-4 border-t ${darkTheme ? 'border-slate-800' : 'border-slate-200'} space-y-4`}>
+                                      {/* Category sub-table summary */}
+                                      <div className="space-y-2">
+                                        <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Свод по технологическим категориям</h5>
+                                        <div className="overflow-x-auto rounded-lg border border-slate-800/40">
+                                          <table className="w-full text-left text-[11px] font-mono">
+                                            <thead className={darkTheme ? 'bg-slate-950 text-slate-400' : 'bg-slate-100 text-slate-700'}>
+                                              <tr>
+                                                <th className="p-2 font-sans font-bold">Категория</th>
+                                                <th className="p-2 text-right">Текущий период (кВт·ч)</th>
+                                                <th className="p-2 text-right">Прошлый период (кВт·ч)</th>
+                                                <th className="p-2 text-right">Изменение</th>
+                                                <th className="p-2 text-right font-sans font-bold">Динамика (%)</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-800/30">
+                                              {categories.map(cat => {
+                                                const catPoints = stPoints.filter(p => p.category === cat);
+                                                if (catPoints.length === 0) return null;
+                                                const catPtIds = catPoints.map(p => p.id);
+
+                                                const cCurr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                                const cPrev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                                const cDiff = cCurr - cPrev;
+                                                const cPct = cPrev > 0 ? (cDiff / cPrev) * 100 : 0;
+
+                                                return (
+                                                  <tr key={cat} className={darkTheme ? 'hover:bg-slate-800/20' : 'hover:bg-slate-50'}>
+                                                    <td className="p-2 font-sans font-bold text-slate-300">{cat}</td>
+                                                    <td className="p-2 text-right">{cCurr.toLocaleString()}</td>
+                                                    <td className="p-2 text-right text-slate-500">{cPrev.toLocaleString()}</td>
+                                                    <td className={`p-2 text-right font-semibold ${cDiff > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                      {cDiff > 0 ? `+${cDiff.toLocaleString()}` : cDiff.toLocaleString()}
+                                                    </td>
+                                                    <td className="p-2 text-right font-sans font-bold">
+                                                      <span className={`px-2 py-0.5 rounded text-[10px] ${
+                                                        cDiff > 0 
+                                                          ? 'bg-rose-500/10 text-rose-400' 
+                                                          : 'bg-emerald-500/10 text-emerald-400'
+                                                      }`}>
+                                                        {cDiff > 0 ? `+${cPct.toFixed(1)}%` : `${cPct.toFixed(1)}%`}
+                                                      </span>
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              }).filter(Boolean)}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+
+                                      {/* Points list detailed table */}
+                                      <div className="space-y-2">
+                                        <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Детализация по точкам поставки (ТП) и управление показателями</h5>
+                                        <div className="overflow-x-auto rounded-lg border border-slate-800/40">
+                                          <table className="w-full text-left text-[11px] font-mono">
+                                            <thead className={darkTheme ? 'bg-slate-950 text-slate-400' : 'bg-slate-100 text-slate-700'}>
+                                              <tr>
+                                                <th className="p-2.5 font-sans font-bold">Точка поставки (ТП)</th>
+                                                <th className="p-2.5 font-sans font-bold">Категория</th>
+                                                <th className="p-2.5 font-sans font-bold">Учет</th>
+                                                <th className="p-2.5 text-right">Период (кВт·ч)</th>
+                                                <th className="p-2.5 text-right">Прошлый г.</th>
+                                                <th className="p-2.5 text-right">YTD Текущий</th>
+                                                <th className="p-2.5 text-right">YTD Прошлый</th>
+                                                <th className="p-2.5 text-right">YTD Динамика</th>
+                                                <th className="p-2.5 text-center font-sans font-bold">Действия</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-800/30">
+                                              {stPoints.map(p => {
+                                                const ptCurr = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear && r.month === selectedMonth)?.value || 0;
+                                                const ptPrev = readings.find(r => r.supplyPointId === p.id && r.year === selectedYear - 1 && r.month === selectedMonth)?.value || 0;
+
+                                                const ptCurrYtd = readings.filter(r => r.year === selectedYear && ytdMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((s, r) => s + r.value, 0);
+                                                const ptPrevYtd = readings.filter(r => r.year === selectedYear - 1 && ytdMonthsList.includes(r.month) && r.supplyPointId === p.id).reduce((s, r) => s + r.value, 0);
+                                                const ptDiffYtd = ptCurrYtd - ptPrevYtd;
+                                                const ptPctYtd = ptPrevYtd > 0 ? (ptDiffYtd / ptPrevYtd) * 100 : 0;
+
+                                                const calcMethodLabel = p.calculationMethod === 'estimated' ? 'Расчетный' : 'ПУ';
+
+                                                return (
+                                                  <tr key={p.id} className={darkTheme ? 'hover:bg-slate-800/20' : 'hover:bg-slate-50'}>
+                                                    <td className="p-2.5 font-sans font-bold text-slate-200">{p.name}</td>
+                                                    <td className="p-2.5 font-sans text-slate-400">{p.category}</td>
+                                                    <td className="p-2.5">
+                                                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                                        p.calculationMethod === 'estimated' 
+                                                          ? 'bg-amber-500/15 text-amber-500' 
+                                                          : 'bg-blue-500/15 text-blue-400'
+                                                      }`}>
+                                                        {calcMethodLabel}
+                                                      </span>
+                                                    </td>
+                                                    <td className="p-2.5 text-right font-bold text-slate-100">{ptCurr.toLocaleString()}</td>
+                                                    <td className="p-2.5 text-right text-slate-500">{ptPrev.toLocaleString()}</td>
+                                                    <td className="p-2.5 text-right">{ptCurrYtd.toLocaleString()}</td>
+                                                    <td className="p-2.5 text-right text-slate-500">{ptPrevYtd.toLocaleString()}</td>
+                                                    <td className={`p-2.5 text-right font-extrabold ${ptDiffYtd > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                      {ptDiffYtd > 0 ? `+${ptDiffYtd.toLocaleString()}` : ptDiffYtd.toLocaleString()}
+                                                      <span className="block text-[8px] opacity-75 font-semibold">
+                                                        {ptDiffYtd > 0 ? `+${ptPctYtd.toFixed(1)}%` : `${ptPctYtd.toFixed(1)}%`}
+                                                      </span>
+                                                    </td>
+                                                    <td className="p-2.5 text-center font-sans">
+                                                      <button
+                                                        onClick={() => handleEditPointFromDetailed(p)}
+                                                        className="px-2 py-1 bg-blue-600/15 text-blue-400 hover:bg-blue-600 hover:text-white border border-blue-500/20 hover:border-transparent rounded font-bold text-[10px] transition-all cursor-pointer"
+                                                      >
+                                                        Редактировать
+                                                      </button>
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
 
