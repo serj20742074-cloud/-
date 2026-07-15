@@ -34,7 +34,8 @@ import {
   Activity,
   Calendar,
   ExternalLink,
-  Presentation
+  Presentation,
+  BarChart3
 } from 'lucide-react';
 
 import {
@@ -1099,6 +1100,143 @@ export default function App() {
       };
     });
 
+    // Graphical and Visual SVGs calculations
+    const topStations = stations.map(st => {
+      const stPoints = supplyPoints.filter(p => p.stationId === st.id && p.isActive);
+      const stPtIds = stPoints.map(p => p.id);
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      return { name: st.name, curr, prev };
+    })
+    .sort((a, b) => b.curr - a.curr)
+    .slice(0, 5);
+
+    const maxValStations = Math.max(...topStations.map(s => Math.max(s.curr, s.prev)), 1);
+
+    const catsData = categories.map(cat => {
+      const catPtIds = supplyPoints.filter(p => p.category === cat && p.isActive).map(p => p.id);
+      const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      return { name: cat, curr, prev };
+    }).filter(c => c.curr > 0 || c.prev > 0);
+
+    const grandTotalCats = catsData.reduce((sum, c) => sum + c.curr, 0) || 1;
+    const maxCatVal = Math.max(...catsData.map(c => Math.max(c.curr, c.prev)), 1);
+
+    const monthsDataTrend = selectedMonthsList.map(m => {
+      const curr = readings.filter(r => r.year === selectedYear && r.month === m && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === m && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+      return { month: m, name: RUSSIAN_MONTHS_SHORT[m - 1], curr, prev };
+    });
+
+    const meterPointsCount = supplyPoints.filter(p => p.isActive && p.calculationMethod !== 'estimated').length;
+    const totalPointsCount = supplyPoints.filter(p => p.isActive).length || 1;
+    const meterRatio = Math.round((meterPointsCount / totalPointsCount) * 100);
+
+    // Helper to render high-fidelity colored bar inside MS Word HTML tables
+    const renderHtmlBar = (value: number, maxValue: number, color: string, label: string) => {
+      const pct = maxValue > 0 ? Math.round((value / maxValue) * 100) : 0;
+      const widthPct = pct > 0 ? Math.max(pct, 2) : 0;
+      return `
+        <table width="100%" cellspacing="0" cellpadding="0" style="margin-top: 2px; margin-bottom: 2px;">
+          <tr>
+            <td width="280" style="padding: 0; vertical-align: middle;">
+              <table width="100%" cellspacing="0" cellpadding="0" style="border: 1px solid #cbd5e1; background-color: #ffffff;">
+                <tr>
+                  <td width="${widthPct}%" bgcolor="${color}" style="height: 12px; font-size: 1px; line-height: 1px;">&nbsp;</td>
+                  <td width="${100 - widthPct}%" style="font-size: 1px; line-height: 1px;">&nbsp;</td>
+                </tr>
+              </table>
+            </td>
+            <td style="padding-left: 10px; font-size: 8.5pt; font-family: Arial, sans-serif; font-weight: bold; color: #1e293b; vertical-align: middle; white-space: nowrap;">
+              ${label}
+            </td>
+          </tr>
+        </table>
+      `;
+    };
+
+    // Render HTML components designed to look like vector charts in MS Word
+    const htmlTopStationsCard = `
+      <table width="550" cellspacing="0" cellpadding="8" style="font-family: Arial, sans-serif; border: 1px solid #cbd5e1; background-color: #f8fafc; margin-bottom: 20px; border-collapse: collapse;">
+        <tr bgcolor="#1e3a8a">
+          <td colspan="2" style="color: #ffffff; font-weight: bold; font-size: 10pt; padding: 10px 12px; font-family: Arial, sans-serif;">🏆 ТОП-5 СТАНЦИЙ ПО ПОТРЕБЛЕНИЮ ЭЛЕКТРОЭНЕРГИИ (кВт·ч)</td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding: 8px 12px; font-size: 8.5pt; color: #334155; text-align: right; font-family: Arial, sans-serif;">
+            <span style="display: inline-block; width: 12px; height: 12px; background-color: #2563eb; vertical-align: middle; margin-right: 4px;"></span>
+            <strong style="color: #2563eb; margin-right: 15px;">${selectedYear} год</strong>
+            <span style="display: inline-block; width: 12px; height: 12px; background-color: #94a3b8; vertical-align: middle; margin-right: 4px;"></span>
+            <strong style="color: #94a3b8;">${selectedYear - 1} год</strong>
+          </td>
+        </tr>
+        ${topStations.map((st, idx) => `
+          <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td width="160" style="font-size: 9pt; font-weight: bold; color: #1e293b; padding: 8px 12px; vertical-align: middle; font-family: Arial, sans-serif;">
+              ${idx + 1}. ${st.name}
+            </td>
+            <td style="padding: 8px 12px; vertical-align: middle;">
+              ${renderHtmlBar(st.curr, maxValStations, "#2563eb", `${Math.round(st.curr).toLocaleString()}`)}
+              ${renderHtmlBar(st.prev, maxValStations, "#94a3b8", `${Math.round(st.prev).toLocaleString()}`)}
+            </td>
+          </tr>
+        `).join("")}
+      </table>
+    `;
+
+    const htmlCategoriesCard = `
+      <table width="550" cellspacing="0" cellpadding="8" style="font-family: Arial, sans-serif; border: 1px solid #cbd5e1; background-color: #f8fafc; margin-bottom: 20px; border-collapse: collapse;">
+        <tr bgcolor="#4f46e5">
+          <td colspan="2" style="color: #ffffff; font-weight: bold; font-size: 10pt; padding: 10px 12px; font-family: Arial, sans-serif;">⚡ СТРУКТУРА ПОТРЕБЛЕНИЯ ПО КАТЕГОРИЯМ (кВт·ч)</td>
+        </tr>
+        ${catsData.map((cat, idx) => {
+          const share = (cat.curr / grandTotalCats) * 100;
+          return `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td width="180" style="font-size: 9pt; font-weight: bold; color: #1e293b; padding: 8px 12px; vertical-align: middle; font-family: Arial, sans-serif;">
+                ${cat.name}<br/>
+                <span style="font-size: 8pt; color: #64748b; font-weight: normal;">Доля: ${share.toFixed(1)}%</span>
+              </td>
+              <td style="padding: 8px 12px; vertical-align: middle;">
+                ${renderHtmlBar(cat.curr, maxCatVal, "#4f46e5", `${Math.round(cat.curr).toLocaleString()}`)}
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </table>
+    `;
+
+    let htmlTrendLinesCard = "";
+    if (selectedMonthsList.length > 1) {
+      const maxValTrend = Math.max(...monthsDataTrend.map(d => Math.max(d.curr, d.prev)), 1);
+      htmlTrendLinesCard = `
+        <table width="550" cellspacing="0" cellpadding="8" style="font-family: Arial, sans-serif; border: 1px solid #cbd5e1; background-color: #f8fafc; margin-bottom: 20px; border-collapse: collapse;">
+          <tr bgcolor="#d97706">
+            <td colspan="2" style="color: #ffffff; font-weight: bold; font-size: 10pt; padding: 10px 12px; font-family: Arial, sans-serif;">📈 ПОМЕСЯЧНАЯ ДИНАМИКА ПОТРЕБЛЕНИЯ РЕГИОНА (кВт·ч)</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="padding: 8px 12px; font-size: 8.5pt; color: #334155; text-align: right; font-family: Arial, sans-serif;">
+              <span style="display: inline-block; width: 12px; height: 12px; background-color: #2563eb; vertical-align: middle; margin-right: 4px;"></span>
+              <strong style="color: #2563eb; margin-right: 15px;">${selectedYear} год</strong>
+              <span style="display: inline-block; width: 12px; height: 12px; background-color: #f59e0b; vertical-align: middle; margin-right: 4px;"></span>
+              <strong style="color: #f59e0b;">${selectedYear - 1} год</strong>
+            </td>
+          </tr>
+          ${monthsDataTrend.map((d) => `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td width="100" style="font-size: 9pt; font-weight: bold; color: #1e293b; padding: 8px 12px; vertical-align: middle; font-family: Arial, sans-serif;">
+                ${d.name}
+              </td>
+              <td style="padding: 8px 12px; vertical-align: middle;">
+                ${renderHtmlBar(d.curr, maxValTrend, "#2563eb", `${Math.round(d.curr).toLocaleString()}`)}
+                ${renderHtmlBar(d.prev, maxValTrend, "#f59e0b", `${Math.round(d.prev).toLocaleString()}`)}
+              </td>
+            </tr>
+          `).join("")}
+        </table>
+      `;
+    }
+
     const htmlDocContent = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
       <head>
@@ -1237,10 +1375,21 @@ export default function App() {
           динамика: <span class="${totalDiff > 0 ? 'overrun' : 'saving'}">${totalDiff > 0 ? `+${totalDiff.toLocaleString()}` : totalDiff.toLocaleString()} кВт·ч (${totalPrev > 0 ? (totalDiff > 0 ? '+' : '') + totalPct.toFixed(2) : '0'}%)</span>).<br/>
           • Накопительный итог с начала года (YTD): <strong>${totalCurrentYtd.toLocaleString()} кВт·ч</strong> (прошлый год YTD: ${totalPrevYtd.toLocaleString()} кВт·ч, 
           динамика YTD: <span class="${totalYtdDiff > 0 ? 'overrun' : 'saving'}">${totalYtdDiff > 0 ? `+${totalYtdDiff.toLocaleString()}` : totalYtdDiff.toLocaleString()} кВт·ч (${totalPrevYtd > 0 ? (totalYtdDiff > 0 ? '+' : '') + totalYtdPct.toFixed(2) : '0'}%)</span>).<br/>
+          • Доля коммерческого приборного учета на постах: <strong>${meterRatio}%</strong> (приборов учета: ${meterPointsCount} из ${totalPointsCount} активных ТП).<br/>
           • Общее состояние энергоэффективности: <strong style="color: ${totalDiff > 0 ? '#dc2626' : '#16a34a'}">${totalDiff > 0 ? 'ЗАФИКСИРОВАН ПЕРЕРАСХОД РЕСУРСОВ' : 'ДОСТИГНУТА СТАБИЛЬНАЯ ЭКОНОМИЯ'}</strong>.
         </div>
 
-        <h2>РАЗДЕЛ 1. АНАЛИЗ ПО ТЕХНОЛОГИЧЕСКИМ КАТЕГОРИЯМ ПОТРЕБИТЕЛЕЙ</h2>
+        <h2>РАЗДЕЛ 1. ВИЗУАЛЬНЫЙ АНАЛИЗ И ГРАФИЧЕСКИЕ МАТЕРИАЛЫ</h2>
+        <p>Для улучшения восприятия и быстрого принятия оперативных решений ниже приведены автоматические диаграммы распределения и трендов энергопотребления по ключевым узлам, сформированные в виде совместимых табличных графиков:</p>
+        
+        <div style="margin-top: 15px; margin-bottom: 25px;">
+          ${htmlTopStationsCard}
+          <br/>
+          ${htmlCategoriesCard}
+          ${htmlTrendLinesCard ? `<br/>${htmlTrendLinesCard}` : ''}
+        </div>
+
+        <h2>РАЗДЕЛ 2. АНАЛИЗ ПО ТЕХНОЛОГИЧЕСКИМ КАТЕГОРИЯМ ПОТРЕБИТЕЛЕЙ</h2>
         <p>Ниже представлена сводная ведомость потребления электроэнергии в разрезе основных категорий технологических нужд за отчетный период и с начала года (YTD) в сравнении с прошлым годом:</p>
 
         <table>
@@ -1280,7 +1429,7 @@ export default function App() {
           </tbody>
         </table>
 
-        <h2>РАЗДЕЛ 2. АНАЛИЗ ПО СПОСОБАМ РАСЧЕТА РАСХОДА</h2>
+        <h2>РАЗДЕЛ 3. АНАЛИЗ ПО СПОСОБАМ РАСЧЕТА РАСХОДА</h2>
         <p>Сопоставление потребления, рассчитанного по показаниям коммерческих приборов учета (прямое измерение) и по расчетному способу (по установленной мощности оборудования в отсутствие ПУ):</p>
 
         <table>
@@ -1320,18 +1469,53 @@ export default function App() {
           </tbody>
         </table>
 
-        <h2>РАЗДЕЛ 3. ДЕТАЛЬНЫЙ ЭНЕРГОАУДИТ В РАЗРЕЗЕ СТАНЦИЙ И ТОЧЕК ПОСТАВКИ</h2>
+        <h2>РАЗДЕЛ 4. ДЕТАЛЬНЫЙ ЭНЕРГОАУДИТ В РАЗРЕЗЕ СТАНЦИЙ И ТОЧЕК ПОСТАВКИ</h2>
         <p>Подробный аудит каждой железнодорожной станции с распределением по технологическим категориям и отдельным точкам поставки с динамикой накопительного итога:</p>
 
         ${stationAnalysis.map(sa => {
           const stDiffPctText = sa.prev > 0 ? `${sa.diff > 0 ? '+' : ''}${sa.pct.toFixed(1)}%` : '0%';
           const stDiffYtdPctText = sa.prevYtd > 0 ? `${sa.diffYtd > 0 ? '+' : ''}${sa.pctYtd.toFixed(1)}%` : '0%';
           
+          const stPoints = supplyPoints.filter(p => p.stationId === sa.station.id && p.isActive);
+          const stPtIds = stPoints.map(p => p.id);
+
+          const stationMonthsData = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(m => {
+            return readings
+              .filter(r => r.year === selectedYear && r.month === m && stPtIds.includes(r.supplyPointId))
+              .reduce((sum, r) => sum + r.value, 0);
+          });
+
+          const stationSparklineHtml = `
+            <table cellspacing="0" cellpadding="4" style="width: 480px; border: 1px solid #cbd5e1; border-collapse: collapse; margin-top: 6px; margin-bottom: 12px; margin-left: 10px; background-color: #f8fafc; font-family: Arial, sans-serif;">
+              <tr bgcolor="#f1f5f9" style="border-bottom: 1px solid #cbd5e1; font-weight: bold; text-align: center; font-size: 7.5pt; color: #475569;">
+                <td colspan="12" style="border: 1px solid #cbd5e1; padding: 5px; text-align: left; font-size: 8pt; color: #1e3a8a;">
+                  📊 Динамика потребления станции по месяцам за ${selectedYear} г. (кВт·ч):
+                </td>
+              </tr>
+              <tr bgcolor="#f8fafc" style="font-weight: bold; text-align: center; font-size: 7pt; color: #475569; border-bottom: 1px solid #cbd5e1;">
+                ${RUSSIAN_MONTHS_SHORT.map((m, idx) => `
+                  <td style="border: 1px solid #cbd5e1; padding: 4px; ${idx + 1 === selectedMonth ? 'background-color: #fef3c7; color: #b45309;' : ''}">${m}</td>
+                `).join("")}
+              </tr>
+              <tr style="text-align: center; font-size: 7pt; color: #1e293b;">
+                ${stationMonthsData.map((val, idx) => `
+                  <td style="border: 1px solid #cbd5e1; padding: 4px; font-family: monospace; ${idx + 1 === selectedMonth ? 'background-color: #fef3c7; font-weight: bold; color: #b45309;' : ''}">
+                    ${val > 0 ? Math.round(val).toLocaleString() : '0'}
+                  </td>
+                `).join("")}
+              </tr>
+            </table>
+          `;
+
           return `
             <div class="station-header">
               <strong style="font-size: 11pt; color: #1e3a8a;">ЖД СТАНЦИЯ: ${sa.station.name} (${sa.station.section})</strong><br/>
               • Расход за период: <strong>${sa.curr.toLocaleString()} кВт·ч</strong> (предыдущий год: ${sa.prev.toLocaleString()} кВт·ч, динамика: <span class="${sa.diff > 0 ? 'overrun' : 'saving'}">${sa.diff > 0 ? '+' : ''}${sa.diff.toLocaleString()} кВт·ч (${stDiffPctText})</span>)<br/>
               • Накопительно с начала года (YTD): <strong>${sa.currYtd.toLocaleString()} кВт·ч</strong> (прошлый YTD: ${sa.prevYtd.toLocaleString()} кВт·ч, динамика YTD: <span class="${sa.diffYtd > 0 ? 'overrun' : 'saving'}">${sa.diffYtd > 0 ? '+' : ''}${sa.diffYtd.toLocaleString()} кВт·ч (${stDiffYtdPctText})</span>)
+            </div>
+
+            <div style="margin-bottom: 10px;">
+              ${stationSparklineHtml}
             </div>
 
             <p style="font-size: 9.5pt; margin-bottom: 5px;"><strong>Свод по категориям на станции:</strong></p>
@@ -7061,6 +7245,249 @@ export default function App() {
                             </div>
                           </div>
                         </div>
+                        
+                        {/* Graphical Material & Visual Analytics */}
+                        <div className={`p-5 rounded-xl border ${darkTheme ? 'bg-slate-900/40 border-slate-750' : 'bg-white border-slate-200'} shadow-sm space-y-6`}>
+                          <div className="flex items-center gap-2 border-b border-slate-850/40 pb-3">
+                            <BarChart3 className="w-5 h-5 text-indigo-400 animate-pulse" />
+                            <div>
+                              <h4 className={`text-xs font-bold uppercase tracking-wider ${darkTheme ? 'text-indigo-400' : 'text-indigo-600'}`}>Графический анализ и сравнение показателей</h4>
+                              <p className="text-[10px] text-slate-400">Визуализация структуры потребления и динамики по отношению к прошлому году</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {/* Visual 1: Top-5 Stations */}
+                            <div className={`p-4 rounded-xl border ${darkTheme ? 'bg-slate-950/60 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+                              <h5 className="text-xs font-extrabold text-slate-300 mb-4 flex items-center justify-between">
+                                <span className={darkTheme ? "text-slate-300" : "text-slate-700"}>🏆 ТОП-5 СТАНЦИЙ ПО ПОТРЕБЛЕНИЮ</span>
+                                <span className="text-[9px] font-normal text-slate-500 uppercase font-mono">кВт·ч за {selectedPeriodName}</span>
+                              </h5>
+
+                              {(() => {
+                                const topStations = stations.map(st => {
+                                  const stPoints = supplyPoints.filter(p => p.stationId === st.id && p.isActive);
+                                  const stPtIds = stPoints.map(p => p.id);
+                                  const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                  const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && stPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                  return { name: st.name, curr, prev };
+                                })
+                                .sort((a, b) => b.curr - a.curr)
+                                .slice(0, 5);
+
+                                const maxVal = Math.max(...topStations.map(s => Math.max(s.curr, s.prev)), 1);
+
+                                return (
+                                  <div className="space-y-4">
+                                    {topStations.map((st, idx) => {
+                                      const stDiff = st.curr - st.prev;
+                                      const stPct = st.prev > 0 ? (stDiff / st.prev) * 100 : 0;
+                                      const currW = (st.curr / maxVal) * 100;
+                                      const prevW = (st.prev / maxVal) * 100;
+
+                                      return (
+                                        <div key={idx} className="space-y-1.5">
+                                          <div className="flex items-center justify-between text-xs">
+                                            <span className={`font-extrabold truncate max-w-[200px] flex items-center gap-1 ${darkTheme ? 'text-slate-250' : 'text-slate-750'}`}>
+                                              <span className="text-[10px] text-slate-500 font-mono">#{idx+1}</span>
+                                              {st.name}
+                                            </span>
+                                            <div className="flex items-center gap-2 font-mono text-[10px]">
+                                              <span className={`${darkTheme ? 'text-slate-400' : 'text-slate-600'} font-bold`}>{st.curr.toLocaleString()} кВт·ч</span>
+                                              {stDiff !== 0 && (
+                                                <span className={`font-bold ${stDiff > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                                  {stDiff > 0 ? `+${stPct.toFixed(1)}%` : `${stPct.toFixed(1)}%`}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                          
+                                          {/* Bars */}
+                                          <div className="space-y-1">
+                                            {/* Current Year */}
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-[8px] text-slate-500 w-8 text-right font-mono">{selectedYear}г.</span>
+                                              <div className={`flex-1 h-3 rounded overflow-hidden relative group ${darkTheme ? 'bg-slate-800/50' : 'bg-slate-200/50'}`}>
+                                                <div 
+                                                  className="h-full bg-gradient-to-r from-blue-600 to-indigo-500 rounded transition-all duration-500 hover:brightness-110" 
+                                                  style={{ width: `${currW}%` }}
+                                                />
+                                              </div>
+                                            </div>
+
+                                            {/* Previous Year */}
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-[8px] text-slate-500 w-8 text-right font-mono">{selectedYear - 1}г.</span>
+                                              <div className={`flex-1 h-2 rounded overflow-hidden relative ${darkTheme ? 'bg-slate-800/30' : 'bg-slate-200/30'}`}>
+                                                <div 
+                                                  className="h-full bg-slate-500 rounded opacity-60 transition-all duration-500" 
+                                                  style={{ width: `${prevW}%` }}
+                                                />
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    <div className="flex justify-between pt-2 border-t border-slate-800/20 text-[9px] text-slate-500 font-mono">
+                                      <span>0 кВт·ч</span>
+                                      <span>{Math.round(maxVal / 2).toLocaleString()} кВт·ч</span>
+                                      <span>{Math.round(maxVal).toLocaleString()} кВт·ч</span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+
+                            {/* Visual 2: Category distribution and YoY change */}
+                            <div className={`p-4 rounded-xl border ${darkTheme ? 'bg-slate-950/60 border-slate-850' : 'bg-slate-50 border-slate-200'}`}>
+                              <h5 className="text-xs font-extrabold text-slate-300 mb-4 flex items-center justify-between">
+                                <span className={darkTheme ? "text-slate-300" : "text-slate-700"}>⚡ СТРУКТУРА ПО КАТЕГОРИЯМ</span>
+                                <span className="text-[9px] font-normal text-slate-500 uppercase font-mono">Доля и сравнение</span>
+                              </h5>
+
+                              {(() => {
+                                const activePtIds = supplyPoints.filter(p => p.isActive).map(p => p.id);
+                                const catsData = categories.map(cat => {
+                                  const catPtIds = supplyPoints.filter(p => p.category === cat && p.isActive).map(p => p.id);
+                                  const curr = readings.filter(r => r.year === selectedYear && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                  const prev = readings.filter(r => r.year === selectedYear - 1 && selectedMonthsList.includes(r.month) && catPtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                  return { name: cat, curr, prev };
+                                }).filter(c => c.curr > 0 || c.prev > 0);
+
+                                const grandTotal = catsData.reduce((sum, c) => sum + c.curr, 0) || 1;
+                                const maxCatVal = Math.max(...catsData.map(c => Math.max(c.curr, c.prev)), 1);
+
+                                return (
+                                  <div className="space-y-4">
+                                    {catsData.map((cat, idx) => {
+                                      const share = (cat.curr / grandTotal) * 100;
+                                      const diff = cat.curr - cat.prev;
+                                      const diffPct = cat.prev > 0 ? (diff / cat.prev) * 100 : 0;
+                                      const barW = (cat.curr / maxCatVal) * 100;
+
+                                      return (
+                                        <div key={idx} className="space-y-1">
+                                          <div className="flex items-center justify-between text-xs">
+                                            <span className={`font-extrabold flex items-center gap-2 ${darkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                                              <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                                              {cat.name}
+                                              <span className="text-[10px] text-slate-500 font-normal">({share.toFixed(1)}%)</span>
+                                            </span>
+                                            <div className="flex items-center gap-2 font-mono text-[10px]">
+                                              <span className={`${darkTheme ? 'text-slate-400' : 'text-slate-600'} font-bold`}>{cat.curr.toLocaleString()} кВт·ч</span>
+                                              {diff !== 0 && (
+                                                <span className={`font-bold ${diff > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                                  {diff > 0 ? `+${diffPct.toFixed(1)}%` : `${diffPct.toFixed(1)}%`}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center gap-2">
+                                            <div className={`flex-1 h-2 rounded overflow-hidden ${darkTheme ? 'bg-slate-800/50' : 'bg-slate-200/50'}`}>
+                                              <div 
+                                                className="h-full bg-indigo-500 rounded transition-all duration-500"
+                                                style={{ width: `${barW}%` }}
+                                              />
+                                            </div>
+                                            <span className="text-[8px] text-slate-500 font-mono w-10 text-right">г/г</span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    {catsData.length === 0 && (
+                                      <div className="text-center py-8 text-xs text-slate-500">Нет данных для отображения структуры</div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* Visual 3: Month by Month Sparkline comparison for selectedYear vs selectedYear-1 */}
+                          {selectedMonthsList.length > 1 && (
+                            <div className={`p-4 rounded-xl border ${darkTheme ? 'bg-slate-950/40 border-slate-850' : 'bg-slate-50/50 border-slate-200'}`}>
+                              <h5 className="text-xs font-extrabold text-slate-300 mb-3 flex items-center gap-2">
+                                <TrendingUp className="w-4 h-4 text-amber-500 animate-pulse" />
+                                <span className={darkTheme ? "text-slate-300" : "text-slate-700"}>ПОМЕСЯЧНАЯ ДИНАМИКА ПОТРЕБЛЕНИЯ (СРАВНИТЕЛЬНЫЙ ГРАФИК)</span>
+                              </h5>
+                              {(() => {
+                                const activePtIds = supplyPoints.filter(p => p.isActive).map(p => p.id);
+                                const monthsData = selectedMonthsList.map(m => {
+                                  const curr = readings.filter(r => r.year === selectedYear && r.month === m && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                  const prev = readings.filter(r => r.year === selectedYear - 1 && r.month === m && activePtIds.includes(r.supplyPointId)).reduce((s, r) => s + r.value, 0);
+                                  return { month: m, name: RUSSIAN_MONTHS_SHORT[m - 1], curr, prev };
+                                });
+
+                                const maxVal = Math.max(...monthsData.map(d => Math.max(d.curr, d.prev)), 100);
+                                const pad = 35;
+                                const h = 120;
+                                const w = 600;
+                                const innerH = h - pad * 2;
+                                const innerW = w - pad * 2;
+
+                                const xOf = (idx: number) => pad + (idx / (monthsData.length - 1 || 1)) * innerW;
+                                const yOf = (val: number) => h - pad - (val / maxVal) * innerH;
+
+                                const linePathCurr = monthsData.map((d, idx) => `${idx === 0 ? 'M' : 'L'} ${xOf(idx)} ${yOf(d.curr)}`).join(' ');
+                                const linePathPrev = monthsData.map((d, idx) => `${idx === 0 ? 'M' : 'L'} ${xOf(idx)} ${yOf(d.prev)}`).join(' ');
+
+                                return (
+                                  <div className="space-y-2">
+                                    <div className="flex items-center gap-4 text-[10px] font-bold">
+                                      <span className="flex items-center gap-1.5 text-blue-400">
+                                        <span className="w-3 h-0.5 bg-blue-500" /> {selectedYear} г.
+                                      </span>
+                                      <span className="flex items-center gap-1.5 text-amber-500">
+                                        <span className="w-3 h-0.5 bg-amber-500" /> {selectedYear - 1} г.
+                                      </span>
+                                    </div>
+                                    <div className="relative">
+                                      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-auto select-none">
+                                        {/* Grid */}
+                                        {[0, 0.5, 1].map((r, i) => {
+                                          const val = r * maxVal;
+                                          const yPos = yOf(val);
+                                          return (
+                                            <g key={i}>
+                                              <line x1={pad} y1={yPos} x2={w - pad} y2={yPos} stroke={darkTheme ? "#334155" : "#e2e8f0"} strokeDasharray="2 3" />
+                                              <text x={pad - 6} y={yPos + 3} textAnchor="end" fill="#64748b" className="text-[8px] font-mono">
+                                                {Math.round(val).toLocaleString()}
+                                              </text>
+                                            </g>
+                                          );
+                                        })}
+
+                                        {/* Months */}
+                                        {monthsData.map((d, idx) => {
+                                          const xPos = xOf(idx);
+                                          return (
+                                            <text key={idx} x={xPos} y={h - pad + 12} textAnchor="middle" fill="#64748b" className="text-[8px] font-bold">
+                                              {d.name}
+                                            </text>
+                                          );
+                                        })}
+
+                                        {/* Lines */}
+                                        <path d={linePathPrev} fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3 3" />
+                                        <path d={linePathCurr} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" />
+
+                                        {/* Dots */}
+                                        {monthsData.map((d, idx) => (
+                                          <g key={idx}>
+                                            <circle cx={xOf(idx)} cy={yOf(d.prev)} r="2.5" fill="#f59e0b" />
+                                            <circle cx={xOf(idx)} cy={yOf(d.curr)} r="3" fill="#3b82f6" />
+                                          </g>
+                                        ))}
+                                      </svg>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </div>
 
                         {/* Hierarchical Stations Breakdown */}
                         <div className="space-y-4">
@@ -7157,6 +7584,63 @@ export default function App() {
                                   {/* Expanded Area: Categories & Points details */}
                                   {isExpanded && (
                                     <div className={`p-4 border-t ${darkTheme ? 'border-slate-800' : 'border-slate-200'} space-y-4`}>
+                                      {/* Mini station sparkline trend */}
+                                      <div className={`p-3 rounded-xl border ${darkTheme ? 'bg-slate-950/40 border-slate-800' : 'bg-slate-100/50 border-slate-200'} flex items-center justify-between gap-4 flex-wrap`}>
+                                        <div className="space-y-0.5">
+                                          <div className={`text-[10px] font-bold uppercase tracking-wider ${darkTheme ? 'text-slate-300' : 'text-slate-700'}`}>Тренд потребления станции ({selectedYear} г.)</div>
+                                          <div className="text-[9px] text-slate-500">Помесячный расход за 6 месяцев года</div>
+                                        </div>
+                                        {(() => {
+                                          const stationMonthsData = [1, 2, 3, 4, 5, 6].map(m => {
+                                            return readings
+                                              .filter(r => r.year === selectedYear && r.month === m && stPtIds.includes(r.supplyPointId))
+                                              .reduce((sum, r) => sum + r.value, 0);
+                                          });
+                                          const maxVal = Math.max(...stationMonthsData, 1);
+                                          const pointsStr = stationMonthsData.map((val, idx) => `${idx * 40 + 10},${50 - (val / maxVal) * 40}`).join(' ');
+                                          return (
+                                            <div className="flex items-center gap-4">
+                                              <div className="font-mono text-xs text-right">
+                                                <span className="text-slate-500 text-[9px] block uppercase">Пиковое значение</span>
+                                                <span className={`font-bold ${darkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{maxVal.toLocaleString()} кВт·ч</span>
+                                              </div>
+                                              <svg width="220" height="65" className="overflow-visible select-none">
+                                                <polyline
+                                                  fill="none"
+                                                  stroke="#3b82f6"
+                                                  strokeWidth="2.5"
+                                                  strokeLinecap="round"
+                                                  strokeLinejoin="round"
+                                                  points={pointsStr}
+                                                />
+                                                {stationMonthsData.map((val, idx) => (
+                                                  <g key={idx}>
+                                                    <circle
+                                                      cx={idx * 40 + 10}
+                                                      cy={50 - (val / maxVal) * 40}
+                                                      r={idx + 1 === selectedMonth ? "4" : "3"}
+                                                      fill={idx + 1 === selectedMonth ? "#f59e0b" : "#3b82f6"}
+                                                      stroke={darkTheme ? "#0f172a" : "#ffffff"}
+                                                      strokeWidth="1"
+                                                      className="cursor-pointer hover:scale-125 transition-transform"
+                                                    />
+                                                    <text
+                                                      x={idx * 40 + 10}
+                                                      y="62"
+                                                      textAnchor="middle"
+                                                      fill="#64748b"
+                                                      className="text-[8px] font-bold font-mono"
+                                                    >
+                                                      {RUSSIAN_MONTHS_SHORT[idx]}
+                                                    </text>
+                                                  </g>
+                                                ))}
+                                              </svg>
+                                            </div>
+                                          );
+                                        })()}
+                                      </div>
+
                                       {/* Category sub-table summary */}
                                       <div className="space-y-2">
                                         <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Свод по технологическим категориям</h5>
