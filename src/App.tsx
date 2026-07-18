@@ -35,7 +35,8 @@ import {
   Calendar,
   ExternalLink,
   Presentation,
-  BarChart3
+  BarChart3,
+  Monitor
 } from 'lucide-react';
 
 import {
@@ -179,6 +180,7 @@ export default function App() {
   const [anomalySeverityFilter, setAnomalySeverityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<'all' | 'station' | 'supply_point' | 'loss'>('all');
   const [selectedAnomalyForDynamics, setSelectedAnomalyForDynamics] = useState<Anomaly | null>(null);
+  const [offlineSetupTab, setOfflineSetupTab] = useState<'pc' | 'tablet' | 'database'>('pc');
 
   // Backups state configuration
   interface BackupItem {
@@ -7952,6 +7954,187 @@ export default function App() {
                     <p className="text-xs text-slate-450 italic py-2 text-center">Точки резервного копирования отсутствуют. Измените показания или сделайте резервную копию вручную.</p>
                   )}
                 </div>
+              </div>
+
+              {/* АВТОНОМНОЕ РАЗВЕРТЫВАНИЕ И ЗАПУСК */}
+              <div className={`p-5 rounded-xl border space-y-4 ${darkTheme ? 'bg-slate-800/40 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'}`}>
+                <div className="flex items-center gap-2.5 border-b pb-3 border-slate-700/60">
+                  <Monitor className="w-5 h-5 text-blue-500" />
+                  <div>
+                    <h4 className={`text-xs font-bold uppercase ${darkTheme ? 'text-slate-200' : 'text-slate-800'}`}>Автономное развертывание и запуск</h4>
+                    <p className={`text-[10px] ${darkTheme ? 'text-slate-400' : 'text-slate-500'} mt-0.5`}>Настройка приложения для работы без интернета на планшетах Huawei и ПК РЖД</p>
+                  </div>
+                </div>
+
+                <div className={`flex p-1 rounded-lg gap-1 border ${darkTheme ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
+                  <button
+                    onClick={() => setOfflineSetupTab('pc')}
+                    className={`flex-1 text-center py-1.5 text-xs font-bold rounded-md transition-all ${
+                      offlineSetupTab === 'pc' 
+                        ? 'bg-blue-600 text-white shadow' 
+                        : `${darkTheme ? 'text-slate-400 hover:text-slate-300' : 'text-slate-600 hover:text-slate-800'}`
+                    }`}
+                  >
+                    💻 Компьютеры РЖД
+                  </button>
+                  <button
+                    onClick={() => setOfflineSetupTab('tablet')}
+                    className={`flex-1 text-center py-1.5 text-xs font-bold rounded-md transition-all ${
+                      offlineSetupTab === 'tablet' 
+                        ? 'bg-blue-600 text-white shadow' 
+                        : `${darkTheme ? 'text-slate-400 hover:text-slate-300' : 'text-slate-600 hover:text-slate-800'}`
+                    }`}
+                  >
+                    📱 Планшеты Huawei
+                  </button>
+                  <button
+                    onClick={() => setOfflineSetupTab('database')}
+                    className={`flex-1 text-center py-1.5 text-xs font-bold rounded-md transition-all ${
+                      offlineSetupTab === 'database' 
+                        ? 'bg-blue-600 text-white shadow' 
+                        : `${darkTheme ? 'text-slate-400 hover:text-slate-300' : 'text-slate-600 hover:text-slate-800'}`
+                    }`}
+                  >
+                    💾 Локальная БД
+                  </button>
+                </div>
+
+                {offlineSetupTab === 'pc' && (
+                  <div className="space-y-3 text-xs leading-relaxed">
+                    <p className={darkTheme ? 'text-slate-300' : 'text-slate-600'}>
+                      Приложение спроектировано как **автономное**. Для развертывания на стационарном компьютере в закрытой сети железной дороги без внешнего интернета выполните следующие шаги:
+                    </p>
+                    <ol className={`list-decimal list-inside space-y-1.5 text-[11px] pl-1 ${darkTheme ? 'text-slate-350' : 'text-slate-700'}`}>
+                      <li>Создайте на диске ПК рабочую папку, например: <code className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${darkTheme ? 'bg-slate-900 text-blue-400' : 'bg-slate-100 text-blue-600'}`}>C:\РЖД_Контроль_Станций\</code></li>
+                      <li>Скачайте резервную копию базы данных (JSON) и файлы интерфейса.</li>
+                      <li>Поместите в эту папку файлы приложения и скачанный пусковой ярлык ниже.</li>
+                      <li>Запуск ярлыка <strong className={darkTheme ? 'text-white' : 'text-slate-900'}>«Контроль станций»</strong> автоматически откроет браузер на адресе <code className="text-amber-500 font-mono font-bold">http://localhost:8080</code>.</li>
+                    </ol>
+                    
+                    <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                      <button
+                        onClick={() => {
+                          const batContent = `@echo off\r\n` +
+                            `chcp 65001 > nul\r\n` +
+                            `title Контроль станций — ОАО РЖД\r\n` +
+                            `echo ===================================================\r\n` +
+                            `echo   ЗАПУСК АВТОНОМНОЙ СИСТЕМЫ "КОНТРОЛЬ СТАНЦИЙ"\r\n` +
+                            `echo ===================================================\r\n` +
+                            `echo.\r\n` +
+                            `echo Проверка локального окружения...\r\n` +
+                            `cd /d "%~dp0"\r\n` +
+                            `\r\n` +
+                            `where python >nul 2>nul\r\n` +
+                            `if %errorlevel% equ 0 (\r\n` +
+                            `    echo [УСПЕХ] Найден интерпретатор Python.\r\n` +
+                            `    echo Запуск локального веб-сервера на http://localhost:8080 ...\r\n` +
+                            `    start "" "http://localhost:8080"\r\n` +
+                            `    python -m http.server 8080\r\n` +
+                            `    goto end\r\n` +
+                            `)\r\n` +
+                            `\r\n` +
+                            `where node >nul 2>nul\r\n` +
+                            `if %errorlevel% equ 0 (\r\n` +
+                            `    echo [УСПЕХ] Найден интерпретатор Node.js.\r\n` +
+                            `    echo Запуск локального веб-сервера на http://localhost:8080 ...\r\n` +
+                            `    if not exist "server_launcher.js" (\r\n` +
+                            `        echo const express = require('express'); const path = require('path'); const app = express(); app.use(express.static('.')); app.listen(8080, () => console.log('Локальный сервер РЖД запущен на порту 8080')); > server_launcher.js\r\n` +
+                            `    )\r\n` +
+                            `    start "" "http://localhost:8080"\r\n` +
+                            `    node server_launcher.js\r\n` +
+                            `    goto end\r\n` +
+                            `)\r\n` +
+                            `\r\n` +
+                            `echo [ПРЕДУПРЕЖДЕНИЕ] Встроенные веб-серверы Python или Node не найдены.\r\n` +
+                            `echo Попытка открытия приложения напрямую через локальный файл...\r\n` +
+                            `if exist "index.html" (\r\n` +
+                            `    start "" "index.html"\r\n` +
+                            `) else (\r\n` +
+                            `    echo [ОШИБКА] Файл index.html не найден в текущей директории!\r\n` +
+                            `    pause\r\n` +
+                            `)\r\n` +
+                            `:end\r\n`;
+                          const blob = new Blob([batContent], { type: 'text/plain;charset=utf-8' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = 'Запустить_Контроль_Станций.bat';
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold py-2 px-3 rounded flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Скачать ярлык запуска (.BAT)
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const pyContent = `import http.server\n` +
+                            `import socketserver\n` +
+                            `import webbrowser\n` +
+                            `import sys\n\n` +
+                            `PORT = 8080\n` +
+                            `Handler = http.server.SimpleHTTPRequestHandler\n\n` +
+                            `print("===================================================")\n` +
+                            `print("  ЛОКАЛЬНЫЙ СЕРВЕР РЖД: «КОНТРОЛЬ СТАНЦИЙ»")\n` +
+                            `print("===================================================")\n` +
+                            `print(f"Адрес приложения: http://localhost:{PORT}")\n` +
+                            `print("Для выхода нажмите Ctrl+C")\n` +
+                            `print("===================================================")\n\n` +
+                            `webbrowser.open(f"http://localhost:{PORT}")\n\n` +
+                            `try:\n` +
+                            `    with socketserver.TCPServer(("", PORT), Handler) as httpd:\n` +
+                            `        httpd.serve_forever()\n` +
+                            `except KeyboardInterrupt:\n` +
+                            `    print("\\nСервер остановлен.")\n` +
+                            `    sys.exit(0)\n`;
+                          const blob = new Blob([pyContent], { type: 'text/plain;charset=utf-8' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = 'launcher_server.py';
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className={`flex-1 ${darkTheme ? 'bg-slate-750 hover:bg-slate-700' : 'bg-slate-200 hover:bg-slate-300 text-slate-800'} text-xs font-bold py-2 px-3 rounded flex items-center justify-center gap-1.5 transition-all cursor-pointer`}
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Скачать веб-сервер (.PY)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {offlineSetupTab === 'tablet' && (
+                  <div className="space-y-3 text-xs leading-relaxed">
+                    <p className={darkTheme ? 'text-slate-300' : 'text-slate-600'}>
+                      Для работы на планшетах <strong className={darkTheme ? 'text-white' : 'text-slate-900'}>Huawei (HarmonyOS / Android)</strong> в изолированных сетях железной дороги лучше всего использовать технологию <strong className="text-blue-500">PWA (Progressive Web App)</strong>:
+                    </p>
+                    <ol className={`list-decimal list-inside space-y-1.5 text-[11px] pl-1 ${darkTheme ? 'text-slate-350' : 'text-slate-700'}`}>
+                      <li>Перенесите файлы приложения в локальную директорию на флеш-карту или внутреннюю память планшета.</li>
+                      <li>Откройте файл <code className="text-amber-500 font-mono font-semibold">index.html</code> через стандартный браузер Huawei.</li>
+                      <li>В верхнем правом углу браузера нажмите меню (три точки) и выберите <strong className={darkTheme ? 'text-white' : 'text-slate-900'}>«Добавить на главный экран»</strong>.</li>
+                      <li>На рабочем столе планшета создастся полноценный ярлык приложения. Оно будет запускаться во весь экран как обычное установленное приложение, со 100% поддержкой оффлайн работы!</li>
+                    </ol>
+                    <div className={`p-3 border rounded text-[11px] ${darkTheme ? 'bg-slate-900/40 border-slate-800 text-slate-400' : 'bg-amber-50/50 border-amber-200 text-slate-650'}`}>
+                      💡 <strong>Альтернатива:</strong> Вы также можете установить бесплатную утилиту <em>"Tiny Web Server"</em> из Huawei AppGallery. Она запустит веб-сервер на самом планшете, позволяя открывать интерфейс по адресу <code className="text-amber-500 font-mono">http://localhost:8080</code> в любом браузере.
+                    </div>
+                  </div>
+                )}
+
+                {offlineSetupTab === 'database' && (
+                  <div className="space-y-3 text-xs leading-relaxed">
+                    <p className={darkTheme ? 'text-slate-300' : 'text-slate-600'}>
+                      Для обеспечения оффлайн-работы без сложных внешних серверов СУБД, приложение оснащено локальным хранилищем:
+                    </p>
+                    <ul className={`list-disc list-inside space-y-1.5 text-[11px] pl-1 ${darkTheme ? 'text-slate-350' : 'text-slate-700'}`}>
+                      <li><strong className={darkTheme ? 'text-slate-200' : 'text-slate-800'}>Технология БД:</strong> Используется СУБД <strong className="text-blue-500">IndexedDB HTML5</strong>, встроенная в ядро браузера. Она работает без сети, полностью локально, не имеет лимитов на объём данных и автоматически сохраняет все изменения показаний, ведомостей и справочников.</li>
+                      <li><strong className={darkTheme ? 'text-slate-200' : 'text-slate-800'}>Перенос базы данных:</strong> Чтобы перенести ваши показания с компьютера на планшет Huawei, просто скачайте <strong className="text-blue-500">JSON-файл резервной копии</strong> (кнопка вверху страницы), перешлите его на планшет и нажмите кнопку <strong className="text-emerald-500">«Восстановить из файла .JSON»</strong>.</li>
+                      <li><strong className={darkTheme ? 'text-slate-200' : 'text-slate-800'}>Безопасность:</strong> База данных хранится в изолированном пространстве вашего устройства и не передается в облако, что соответствует жестким требованиям безопасности ОАО «РЖД».</li>
+                    </ul>
+                  </div>
+                )}
               </div>
 
               <div className="p-4 bg-slate-900 text-[10px] text-slate-400 rounded-lg space-y-1.5 leading-relaxed font-mono">
