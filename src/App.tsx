@@ -8002,13 +8002,35 @@ export default function App() {
                 {offlineSetupTab === 'pc' && (
                   <div className="space-y-3 text-xs leading-relaxed">
                     <p className={darkTheme ? 'text-slate-300' : 'text-slate-600'}>
-                      Приложение спроектировано как **автономное**. Для развертывания на стационарном компьютере в закрытой сети железной дороги без внешнего интернета выполните следующие шаги:
+                      Приложение полностью оптимизировано под автономную работу на ПК ОАО «РЖД» и планшетах без интернета. Благодаря новой однофайловой сборке, вы получите <strong className="text-emerald-500">один единственный файл index.html</strong>, в который вшито абсолютно все (код, дизайн, иконки, шрифты).
                     </p>
-                    <ol className={`list-decimal list-inside space-y-1.5 text-[11px] pl-1 ${darkTheme ? 'text-slate-350' : 'text-slate-700'}`}>
-                      <li>Создайте на диске ПК рабочую папку, например: <code className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${darkTheme ? 'bg-slate-900 text-blue-400' : 'bg-slate-100 text-blue-600'}`}>C:\РЖД_Контроль_Станций\</code></li>
-                      <li>Скачайте резервную копию базы данных (JSON) и файлы интерфейса.</li>
-                      <li>Поместите в эту папку файлы приложения и скачанный пусковой ярлык ниже.</li>
-                      <li>Запуск ярлыка <strong className={darkTheme ? 'text-white' : 'text-slate-900'}>«Контроль станций»</strong> автоматически откроет браузер на адресе <code className="text-amber-500 font-mono font-bold">http://localhost:8080</code>.</li>
+                    <ol className={`list-decimal list-inside space-y-2 text-[11px] pl-1 ${darkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <li>
+                        <strong className="text-blue-500">Шаг 1. Сборка (компиляция) проекта:</strong>
+                        <p className="mt-1 pl-4 text-slate-400">
+                          На компьютере с установленным Node.js (например, на домашнем ПК или ПК разработчика) откройте терминал в папке проекта и выполните две команды для сборки:
+                        </p>
+                        <div className={`mt-1 ml-4 p-2 rounded font-mono text-[10px] ${darkTheme ? 'bg-slate-900 text-slate-300' : 'bg-slate-100 text-slate-800'}`}>
+                          npm install<br/>
+                          npm run build
+                        </div>
+                      </li>
+                      <li>
+                        <strong className="text-blue-500">Шаг 2. Копирование готового файла:</strong>
+                        <p className="mt-1 pl-4 text-slate-400">
+                          После сборки откройте появившуюся папку <code className="text-emerald-500 font-bold font-mono">dist</code>. Там будет находиться единственный файл <code className="font-bold font-mono text-emerald-500 text-xs">index.html</code> (размером около 1.5-2 МБ). Скопируйте <strong>только этот один файл</strong> на флешку и перенесите на рабочий компьютер РЖД в любую папку, например:
+                        </p>
+                        <span className="block mt-1 ml-4 font-semibold text-amber-500 font-mono text-[11px]">C:\РЖД_Контроль_Станций\</span>
+                      </li>
+                      <li>
+                        <strong className="text-blue-500">Шаг 3. Мгновенный запуск:</strong>
+                        <p className="mt-1 pl-4 text-slate-400">
+                          <strong className="text-emerald-500">Вариант А (Простой):</strong> Просто кликните дважды по перенесенному файлу <code className="font-mono">index.html</code>. Он откроется в Chrome, Edge или любом другом браузере и будет работать на 100% автономно, без белого экрана и без запуска каких-либо серверов!
+                        </p>
+                        <p className="mt-1 pl-4 text-slate-400">
+                          <strong className="text-emerald-500">Вариант Б (С ярлыком запуска):</strong> Скачайте файл <code className="font-bold">.bat</code> ниже, положите его в ту же папку рядом с файлом <code className="font-mono">index.html</code> и запускайте приложение через него для красивого открытия в полноэкранном режиме.
+                        </p>
+                      </li>
                     </ol>
                     
                     <div className="pt-2 flex flex-col sm:flex-row gap-2">
@@ -8021,39 +8043,21 @@ export default function App() {
                             `echo   ЗАПУСК АВТОНОМНОЙ СИСТЕМЫ "КОНТРОЛЬ СТАНЦИЙ"\r\n` +
                             `echo ===================================================\r\n` +
                             `echo.\r\n` +
-                            `echo Проверка локального окружения...\r\n` +
                             `cd /d "%~dp0"\r\n` +
                             `\r\n` +
-                            `where python >nul 2>nul\r\n` +
-                            `if %errorlevel% equ 0 (\r\n` +
-                            `    echo [УСПЕХ] Найден интерпретатор Python.\r\n` +
-                            `    echo Запуск локального веб-сервера на http://localhost:8080 ...\r\n` +
-                            `    start "" "http://localhost:8080"\r\n` +
-                            `    python -m http.server 8080\r\n` +
-                            `    goto end\r\n` +
-                            `)\r\n` +
-                            `\r\n` +
-                            `where node >nul 2>nul\r\n` +
-                            `if %errorlevel% equ 0 (\r\n` +
-                            `    echo [УСПЕХ] Найден интерпретатор Node.js.\r\n` +
-                            `    echo Запуск локального веб-сервера на http://localhost:8080 ...\r\n` +
-                            `    if not exist "server_launcher.js" (\r\n` +
-                            `        echo const express = require('express'); const path = require('path'); const app = express(); app.use(express.static('.')); app.listen(8080, () => console.log('Локальный сервер РЖД запущен на порту 8080')); > server_launcher.js\r\n` +
-                            `    )\r\n` +
-                            `    start "" "http://localhost:8080"\r\n` +
-                            `    node server_launcher.js\r\n` +
-                            `    goto end\r\n` +
-                            `)\r\n` +
-                            `\r\n` +
-                            `echo [ПРЕДУПРЕЖДЕНИЕ] Встроенные веб-серверы Python или Node не найдены.\r\n` +
-                            `echo Попытка открытия приложения напрямую через локальный файл...\r\n` +
-                            `if exist "index.html" (\r\n` +
-                            `    start "" "index.html"\r\n` +
-                            `) else (\r\n` +
-                            `    echo [ОШИБКА] Файл index.html не найден в текущей директории!\r\n` +
+                            `if not exist "index.html" (\r\n` +
+                            `    echo [ОШИБКА] Файл index.html не найден в текущей папке!\r\n` +
+                            `    echo Пожалуйста, убедитесь, что скопировали файл index.html из папки "dist" в эту папку,\r\n` +
+                            `    echo а файл .bat лежит рядом с ним.\r\n` +
+                            `    echo.\r\n` +
                             `    pause\r\n` +
+                            `    exit /b\r\n` +
                             `)\r\n` +
-                            `:end\r\n`;
+                            `\r\n` +
+                            `echo [УСПЕХ] Файл index.html успешно обнаружен.\r\n` +
+                            `echo Запуск приложения в браузере по умолчанию...\r\n` +
+                            `start "" "index.html"\r\n` +
+                            `exit\r\n`;
                           const blob = new Blob([batContent], { type: 'text/plain;charset=utf-8' });
                           const url = URL.createObjectURL(blob);
                           const a = document.createElement('a');
